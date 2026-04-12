@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createChart, ColorType, IChartApi, Time, LineData, LineSeries } from "lightweight-charts";
-import { fetchGoldCandles } from "@/lib/api";
+import type { CandleData } from "@/lib/api";
 
 interface DebasementChartProps {
   goldPrice?: number;
@@ -51,8 +51,9 @@ export default function DebasementChart({ goldPrice }: DebasementChartProps) {
       title: "SMA(20)",
     });
 
-    fetchGoldCandles("1d", 365)
-      .then((candles) => {
+    fetch("/api/gold?interval=1d&limit=365")
+      .then((res) => res.json())
+      .then((candles: CandleData[]) => {
         const MULTIPLIER = 10000;
         const debasementData: LineData<Time>[] = candles.map((c) => ({
           time: c.time as Time,

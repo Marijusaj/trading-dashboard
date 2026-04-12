@@ -25,27 +25,35 @@ export default function Dashboard() {
   });
   const [lastUpdate, setLastUpdate] = useState<string>("");
   const [activeTab, setActiveTab] = useState<"btc" | "trx" | "pair">("btc");
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const fetchPrices = useCallback(async () => {
     try {
-      const res = await fetch(
-        "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,tron&vs_currencies=usd&include_24hr_change=true"
-      );
+      setIsRefreshing(true);
+      const res = await fetch("/api/prices");
       const data = await res.json();
-      if (data?.bitcoin?.usd) {
-        setPrices((prev) => ({
-          ...prev,
-          btc: data.bitcoin.usd,
-          trx: data.tron?.usd || prev.trx,
-          btc24hChange: data.bitcoin.usd_24h_change || 0,
-          trx24hChange: data.tron?.usd_24h_change || 0,
-        }));
+      if (data && !data.error) {
+        setPrices({
+          btc: data.btc,
+          trx: data.trx,
+          gold: data.gold,
+          btc24hChange: data.btc24hChange || 0,
+          trx24hChange: data.trx24hChange || 0,
+        });
       }
       setLastUpdate(new Date().toLocaleTimeString());
     } catch (e) {
       console.error("Price fetch failed:", e);
+    } finally {
+      setIsRefreshing(false);
     }
   }, []);
+
+  const handleRefresh = useCallback(() => {
+    fetchPrices();
+    setRefreshKey((k) => k + 1); // forces chart remount
+  }, [fetchPrices]);
 
   useEffect(() => {
     fetchPrices();
@@ -92,10 +100,11 @@ export default function Dashboard() {
             Last update: {lastUpdate || "loading..."}
           </div>
           <button
-            onClick={fetchPrices}
-            className="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-sm transition-colors"
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            className="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-sm transition-colors disabled:opacity-50"
           >
-            Refresh
+            {isRefreshing ? "⟳ Refreshing..." : "Refresh"}
           </button>
         </div>
       </div>
@@ -139,6 +148,7 @@ export default function Dashboard() {
           {/* Active Chart */}
           {activeTab === "btc" && (
             <PriceChart
+              key={`btc-${refreshKey}`}
               symbol="BTCUSDT"
               title="Bitcoin / USD"
               levels={BTC_LEVELS}
@@ -147,6 +157,7 @@ export default function Dashboard() {
           )}
           {activeTab === "trx" && (
             <PriceChart
+              key={`trx-${refreshKey}`}
               symbol="TRXUSDT"
               title="TRON / USD"
               levels={TRX_LEVELS}
@@ -155,6 +166,7 @@ export default function Dashboard() {
           )}
           {activeTab === "pair" && (
             <PriceChart
+              key={`pair-${refreshKey}`}
               symbol="TRXBTC"
               title="TRON / BTC (Pair Trade)"
               levels={[
@@ -166,7 +178,7 @@ export default function Dashboard() {
           )}
 
           {/* Debasement Chart */}
-          <DebasementChart goldPrice={prices.gold} />
+          <DebasementChart key={`debase-${refreshKey}`} goldPrice={prices.gold} />
 
           {/* Trade Thesis Summary */}
           <div className="bg-[#111] border border-gray-800 rounded-lg p-4">

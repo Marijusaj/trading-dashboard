@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createChart, ColorType, IChartApi, ISeriesApi, CandlestickData, Time, CandlestickSeries } from "lightweight-charts";
-import { fetchCandles, CandleData } from "@/lib/api";
+import type { CandleData } from "@/lib/api";
 
 interface Level {
   price: number;
@@ -80,9 +80,10 @@ export default function PriceChart({ symbol, title, levels, interval = "1d", cur
       });
     });
 
-    // Fetch and set data
-    fetchCandles(symbol, interval)
-      .then((candles) => {
+    // Fetch and set data via API route (avoids CORS)
+    fetch(`/api/candles?symbol=${symbol}&interval=${interval}&limit=200`)
+      .then((res) => res.json())
+      .then((candles: CandleData[]) => {
         const chartData: CandlestickData<Time>[] = candles.map((c: CandleData) => ({
           time: c.time as Time,
           open: c.open,
