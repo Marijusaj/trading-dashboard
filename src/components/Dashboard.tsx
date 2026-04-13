@@ -5,7 +5,9 @@ import PriceChart from "./PriceChart";
 import DebasementChart from "./DebasementChart";
 import KeyLevelsPanel from "./KeyLevelsPanel";
 import MetricsBar from "./MetricsBar";
+import PositionTracker from "./PositionTracker";
 import { BTC_LEVELS, TRX_LEVELS } from "@/lib/levels";
+import { POSITIONS } from "@/lib/positions";
 
 interface Prices {
   btc: number;
@@ -160,7 +162,15 @@ export default function Dashboard() {
               key={`trx-${refreshKey}`}
               symbol="TRXUSDT"
               title="TRON / USD"
-              levels={TRX_LEVELS}
+              levels={[
+                ...TRX_LEVELS,
+                ...POSITIONS.filter((p) => p.symbol === "TRX" && p.status === "open").map((p) => ({
+                  price: p.entryPrice,
+                  label: `Entry $${p.entryPrice.toFixed(4)}`,
+                  color: "#3b82f6",
+                  description: `Your entry — ${p.entryDate}`,
+                })),
+              ]}
               currentPrice={prices.trx}
             />
           )}
@@ -216,7 +226,8 @@ export default function Dashboard() {
         </div>
 
         {/* Sidebar (1 col) */}
-        <div className="lg:col-span-1">
+        <div className="lg:col-span-1 flex flex-col gap-6">
+          <PositionTracker trxPrice={prices.trx} btcPrice={prices.btc} />
           <KeyLevelsPanel btcPrice={prices.btc} trxPrice={prices.trx} />
         </div>
       </div>
