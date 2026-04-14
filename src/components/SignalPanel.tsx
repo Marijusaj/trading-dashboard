@@ -150,8 +150,8 @@ function ScalingPlan({ price, signal }: { price: number; signal: typeof TRX_SIGN
           <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
             <span className="text-red-400">Risk at stop:</span>
             <span className="text-red-400 font-mono">~-$200 (5%)</span>
-            <span className="text-green-400">$0.38 target:</span>
-            <span className="text-green-400 font-mono">~+$710 (17%)</span>
+            <span className="text-green-400">$0.35 target:</span>
+            <span className="text-green-400 font-mono">~+$530 (13%)</span>
             <span className="text-green-300">$0.50 target:</span>
             <span className="text-green-300 font-mono">~+$2,200 (55%)</span>
           </div>
@@ -240,7 +240,7 @@ export default function SignalPanel({ trxPrice }: SignalPanelProps) {
           {lastDailyClose !== undefined ? (
             <span className={`font-mono font-semibold ${lastDailyClose >= signal.breakoutLevel ? "text-green-400" : "text-amber-400"}`}>
               ${lastDailyClose.toFixed(4)}
-              {lastDailyClose >= signal.breakoutLevel ? " ABOVE $0.32" : " below $0.32"}
+              {lastDailyClose >= signal.breakoutLevel ? " ABOVE $0.33" : " below $0.33"}
             </span>
           ) : (
             <span className="text-gray-600">loading...</span>

@@ -1,6 +1,35 @@
 import { NextRequest, NextResponse } from "next/server";
 
-export const dynamic = "force-dynamic"; // Never cache this route on Vercel
+export const dynamic = "force-dynamic";
+
+// Map symbols to CoinGecko IDs
+const GECKO_MAP: Record<string, string> = {
+  btc: "bitcoin",
+  trx: "tron",
+  eth: "ethereum",
+  sol: "solana",
+  xrp: "ripple",
+  bnb: "binancecoin",
+};
+
+function parseGeckoId(symbol: string): { geckoId: string; vsCurrency: string } {
+  // TRXBTC → base=TRX, quote=BTC
+  // BTCUSDT → base=BTC, quote=USDT
+  // TRXUSDT → base=TRX, quote=USDT
+  const isPairBtc = symbol.endsWith("BTC") && symbol !== "BTC";
+  const raw = symbol
+    .replace(/USDT$/i, "")
+    .replace(/USDC$/i, "")
+    .replace(/BTC$/i, "")
+    .toLowerCase();
+
+  // For "BTCUSDT", raw becomes "" after stripping — handle explicitly
+  const base = raw || "btc";
+  return {
+    geckoId: GECKO_MAP[base] || base,
+    vsCurrency: isPairBtc ? "btc" : "usd",
+  };
+}
 
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl;
@@ -8,84 +37,45 @@ export async function GET(req: NextRequest) {
   const interval = searchParams.get("interval") || "1d";
   const limit = searchParams.get("limit") || "200";
 
-  // Try Binance first, then fallback to Binance US, then CoinGecko
-  const sources = [
-    `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`,
-    `https://api.binance.us/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`,
-  ];
+  // ── Source 1: Binance Global (skip Binance US — returns stale data for delisted pairs)
+  try {
+    const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+    const res = await fetch(url, {
+      headers: { Accept: "application/json", "User-Agent": "TradingDashboard/1.0" },
+      cache: "no-store",
+    });
 
-  for (const url of sources) {
-    try {
-      const res = await fetch(url, {
-        headers: {
-          "Accept": "application/json",
-          "User-Agent": "TradingDashboard/1.0",
-        },
-        cache: "no-store",
-      });
-
-      if (!res.ok) {
-        console.error(`Candles API ${url} returned ${res.status}`);
-        continue;
-      }
-
+    if (res.ok) {
       const data = await res.json();
-
-      // Binance error response is an object, not an array
-      if (!Array.isArray(data)) {
-        console.error(`Candles API ${url} returned non-array:`, data);
-        continue;
-      }
-
-      // Validate data is recent — reject if newest candle is older than 7 days
-      if (data.length > 0) {
+      if (Array.isArray(data) && data.length > 0) {
         const newestTs = Number(data[data.length - 1][0]);
-        const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-        if (newestTs < sevenDaysAgo) {
-          console.error(`Candles API ${url} returned stale data (newest: ${new Date(newestTs).toISOString()})`);
-          continue;
+        if (newestTs > Date.now() - 7 * 24 * 60 * 60 * 1000) {
+          const candles = data.map((d: (string | number)[]) => ({
+            time: Math.floor(Number(d[0]) / 1000),
+            open: parseFloat(String(d[1])),
+            high: parseFloat(String(d[2])),
+            low: parseFloat(String(d[3])),
+            close: parseFloat(String(d[4])),
+            volume: parseFloat(String(d[5])),
+          }));
+          return NextResponse.json(candles);
         }
       }
-
-      const candles = data.map((d: (string | number)[]) => ({
-        time: Math.floor(Number(d[0]) / 1000),
-        open: parseFloat(String(d[1])),
-        high: parseFloat(String(d[2])),
-        low: parseFloat(String(d[3])),
-        close: parseFloat(String(d[4])),
-        volume: parseFloat(String(d[5])),
-      }));
-
-      return NextResponse.json(candles);
-    } catch (e) {
-      console.error(`Candles source failed (${url}):`, e);
-      continue;
     }
+  } catch {
+    // Binance blocked on this IP — fall through
   }
 
-  // Fallback: CoinGecko OHLC (works everywhere, no API key needed)
+  // ── Source 2: CoinGecko OHLC
+  const { geckoId, vsCurrency } = parseGeckoId(symbol);
+  const days = interval === "1d" ? 90 : interval === "4h" ? 30 : 7;
+
   try {
-    const coinId = symbol.replace("USDT", "").replace("USDC", "").replace("BTC", "").toLowerCase();
-    const coinMap: Record<string, string> = {
-      btc: "bitcoin", trx: "tron", eth: "ethereum",
-      sol: "solana", xrp: "ripple", bnb: "binancecoin",
-    };
+    const url = `https://api.coingecko.com/api/v3/coins/${geckoId}/ohlc?vs_currency=${vsCurrency}&days=${days}`;
+    const res = await fetch(url, { cache: "no-store" });
 
-    // Handle pair charts (TRXBTC) — use base coin
-    const base = symbol.replace("USDT", "").replace("BTC", "").toLowerCase();
-    const geckoId = coinMap[base] || coinMap[coinId] || base;
-
-    // CoinGecko OHLC: days=90 gives 4-day candles, days=30 gives 4h candles
-    const days = interval === "1d" ? 90 : interval === "4h" ? 30 : 7;
-    const vsCurrency = symbol.endsWith("BTC") ? "btc" : "usd";
-
-    const geckoRes = await fetch(
-      `https://api.coingecko.com/api/v3/coins/${geckoId}/ohlc?vs_currency=${vsCurrency}&days=${days}`,
-      { cache: "no-store" }
-    );
-
-    if (geckoRes.ok) {
-      const data = await geckoRes.json();
+    if (res.ok) {
+      const data = await res.json();
       if (Array.isArray(data) && data.length > 0) {
         const candles = data.map((d: number[]) => ({
           time: Math.floor(d[0] / 1000),
@@ -98,8 +88,62 @@ export async function GET(req: NextRequest) {
         return NextResponse.json(candles);
       }
     }
-  } catch (e) {
-    console.error("CoinGecko fallback failed:", e);
+  } catch {
+    // CoinGecko OHLC failed — try market_chart
+  }
+
+  // ── Source 3: CoinGecko market_chart (synthesize candles from daily prices)
+  try {
+    const url = `https://api.coingecko.com/api/v3/coins/${geckoId}/market_chart?vs_currency=${vsCurrency}&days=${days}&interval=daily`;
+    const res = await fetch(url, { cache: "no-store" });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data.prices && Array.isArray(data.prices) && data.prices.length > 1) {
+        // Group consecutive price points into daily candles
+        const candles = data.prices.map((point: [number, number], i: number) => {
+          const price = point[1];
+          const prevPrice = i > 0 ? data.prices[i - 1][1] : price;
+          return {
+            time: Math.floor(point[0] / 1000),
+            open: prevPrice,
+            high: Math.max(price, prevPrice) * 1.001,
+            low: Math.min(price, prevPrice) * 0.999,
+            close: price,
+            volume: 0,
+          };
+        });
+        return NextResponse.json(candles);
+      }
+    }
+  } catch {
+    // market_chart also failed
+  }
+
+  // ── Source 4: CryptoCompare (another free API)
+  try {
+    const fsym = symbol.replace(/USDT$/i, "").replace(/USDC$/i, "").replace(/BTC$/i, "").toUpperCase() || "BTC";
+    const tsym = symbol.endsWith("BTC") ? "BTC" : "USD";
+    const ccLimit = Math.min(parseInt(limit), 100);
+    const url = `https://min-api.cryptocompare.com/data/v2/histoday?fsym=${fsym}&tsym=${tsym}&limit=${ccLimit}`;
+    const res = await fetch(url, { cache: "no-store" });
+
+    if (res.ok) {
+      const json = await res.json();
+      if (json.Data?.Data && Array.isArray(json.Data.Data)) {
+        const candles = json.Data.Data.map((d: { time: number; open: number; high: number; low: number; close: number; volumeto: number }) => ({
+          time: d.time,
+          open: d.open,
+          high: d.high,
+          low: d.low,
+          close: d.close,
+          volume: d.volumeto || 0,
+        }));
+        return NextResponse.json(candles);
+      }
+    }
+  } catch {
+    // CryptoCompare also failed
   }
 
   return NextResponse.json({ error: "All data sources failed" }, { status: 502 });
