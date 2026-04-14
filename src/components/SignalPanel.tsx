@@ -182,7 +182,7 @@ export default function SignalPanel({ trxPrice }: SignalPanelProps) {
       }
     }
     fetchDailyClose();
-    const interval = setInterval(fetchDailyClose, 60_000); // refresh every minute
+    const interval = setInterval(fetchDailyClose, 900_000); // refresh every 15 min
     return () => clearInterval(interval);
   }, []);
 

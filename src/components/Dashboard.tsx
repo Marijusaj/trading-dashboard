@@ -60,7 +60,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchPrices();
-    const interval = setInterval(fetchPrices, 30000); // every 30s
+    const interval = setInterval(fetchPrices, 900000); // every 15 min
     return () => clearInterval(interval);
   }, [fetchPrices]);
 
@@ -239,7 +239,7 @@ export default function Dashboard() {
 
       {/* Footer */}
       <div className="mt-8 text-center text-gray-700 text-xs">
-        Data from CoinGecko & Binance · Charts by Lightweight Charts · Not financial advice · Auto-refreshes every 30s
+        Data from CoinGecko & Binance · Charts by Lightweight Charts · Not financial advice · Auto-refreshes every 15 min
       </div>
     </div>
   );
