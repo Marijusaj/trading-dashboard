@@ -8,11 +8,11 @@ export const BTC_LEVELS = [
 ];
 
 export const TRX_LEVELS = [
-  { price: 0.3066, label: "Stop Loss", color: "#f44336", description: "Position stop loss. Below = exit." },
-  { price: 0.31, label: "W-Bottom Neckline", color: "#4caf50", description: "W-bottom neckline / key support. Below = thesis breaks." },
-  { price: 0.32, label: "BREAKOUT LEVEL", color: "#ff9800", description: "Key resistance. Daily close above = SIGNAL ON. Add size." },
-  { price: 0.34, label: "Confirm Level", color: "#ffeb3b", description: "Above here = breakout confirmed. Full conviction." },
-  { price: 0.38, label: "W Bottom Target", color: "#8bc34a", description: "W-bottom measured move target." },
+  { price: 0.285, label: "Thesis Invalid", color: "#b71c1c", description: "Below here = thesis broken. Exit." },
+  { price: 0.3066, label: "Stop Loss", color: "#f44336", description: "Position stop loss." },
+  { price: 0.31, label: "W-Bottom Neckline", color: "#4caf50", description: "W-bottom neckline / key support." },
+  { price: 0.33, label: "BREAKOUT (verified)", color: "#ff9800", description: "Real breakout level per independent analysis. Daily close above = SIGNAL ON." },
+  { price: 0.35, label: "Supply Zone / Target 1", color: "#ffeb3b", description: "Historical supply zone. Clearing this = confirmed breakout + first target." },
   { price: 0.50, label: "Macro Target", color: "#00e676", description: "Macro stablecoin thesis target." },
 ];
 

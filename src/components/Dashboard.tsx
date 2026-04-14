@@ -193,33 +193,36 @@ export default function Dashboard() {
 
           {/* Trade Thesis Summary */}
           <div className="bg-[#111] border border-gray-800 rounded-lg p-4">
-            <h3 className="text-white font-semibold mb-3">📋 CryptoSniper Trade Thesis (April 2026)</h3>
+            <h3 className="text-white font-semibold mb-3">📋 Trade Thesis — Independently Verified (April 2026)</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-              <div className="bg-red-950/30 border border-red-900/50 rounded-lg p-3">
-                <div className="text-red-400 font-semibold mb-1">🔴 BTC Bearish</div>
+              <div className="bg-gray-900/50 border border-gray-700/50 rounded-lg p-3">
+                <div className="text-gray-300 font-semibold mb-1">📊 BTC — Bearish Under Pressure</div>
                 <ul className="text-gray-400 space-y-1 text-xs">
-                  <li>• Bear flag extending ~10 weeks on weekly</li>
-                  <li>• No reversal structures, weak volume rallies</li>
-                  <li>• Tech stocks rolling over, liquidity squeeze</li>
-                  <li>• Targets: $47.5K → $37K → $36K extreme</li>
+                  <li>• <span className="text-amber-400">Bear flag being challenged</span> — broke $75K</li>
+                  <li>• 200-week MA at $58K = historical floor (never broken)</li>
+                  <li>• Whales accumulated 270K BTC in 30 days</li>
+                  <li>• ETF inflows turned positive ($1.32B March)</li>
+                  <li className="text-gray-600">• Francis targets $47K-$36K — $36K is extreme</li>
                 </ul>
               </div>
               <div className="bg-green-950/30 border border-green-900/50 rounded-lg p-3">
-                <div className="text-green-400 font-semibold mb-1">🟢 TRX Bullish</div>
+                <div className="text-green-400 font-semibold mb-1">🟢 TRX — Consolidation at $0.33</div>
                 <ul className="text-gray-400 space-y-1 text-xs">
-                  <li>• W-bottom + bull pennant squeezing at $0.32</li>
-                  <li>• 53% of USDT on TRON network</li>
-                  <li>• May divergence: TRX up while alts crash</li>
-                  <li>• Prediction: Tron flips Solana in market cap</li>
+                  <li>• W-bottom confirmed, breakout at <span className="text-green-400">$0.33</span></li>
+                  <li>• Decorrelation from BTC <span className="text-green-400">verified</span> (CryptoQuant)</li>
+                  <li>• USDT on Tron: <span className="text-amber-400">46%</span> (was 53%, declining)</li>
+                  <li>• Target: $0.35 (supply zone), then $0.50</li>
+                  <li className="text-gray-600">• Francis $4.72 target — no independent support</li>
                 </ul>
               </div>
               <div className="bg-yellow-950/30 border border-yellow-900/50 rounded-lg p-3">
-                <div className="text-yellow-400 font-semibold mb-1">🟡 May Selloff</div>
+                <div className="text-yellow-400 font-semibold mb-1">⚠️ Key Risks</div>
                 <ul className="text-gray-400 space-y-1 text-xs">
-                  <li>• &quot;Sell in May&quot; — crypto broadly sells off</li>
-                  <li>• USDT dominance pushing to 10%+ (bearish)</li>
-                  <li>• SOL -37% to ~$52, XRP to sub-$1</li>
-                  <li>• Safe havens: TRX, USDT, possibly gold</li>
+                  <li>• BTC bear flag may be invalidated ($75K broken)</li>
+                  <li>• If BTC rallies, TRX may not diverge as expected</li>
+                  <li>• USDT market share on Tron declining</li>
+                  <li>• Justin Sun regulatory risk unresolved</li>
+                  <li>• Below $0.285 = thesis fully invalidated</li>
                 </ul>
               </div>
             </div>

@@ -26,9 +26,8 @@ export const POSITIONS: Position[] = [
     entryDate: "2026-04-12",
     stopLoss: 0.3066,
     targets: [
-      { price: 0.38, label: "W Bottom Target" },
+      { price: 0.35, label: "Breakout Target (verified)" },
       { price: 0.50, label: "Macro Target" },
-      { price: 4.72, label: "Monthly HVF Target" },
     ],
     exchange: "Binance",
     status: "open",
