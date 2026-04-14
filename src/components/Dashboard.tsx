@@ -6,6 +6,7 @@ import DebasementChart from "./DebasementChart";
 import KeyLevelsPanel from "./KeyLevelsPanel";
 import MetricsBar from "./MetricsBar";
 import PositionTracker from "./PositionTracker";
+import SignalPanel from "./SignalPanel";
 import { BTC_LEVELS, TRX_LEVELS } from "@/lib/levels";
 import { POSITIONS } from "@/lib/positions";
 
@@ -192,33 +193,33 @@ export default function Dashboard() {
 
           {/* Trade Thesis Summary */}
           <div className="bg-[#111] border border-gray-800 rounded-lg p-4">
-            <h3 className="text-white font-semibold mb-3">📋 CryptoSniper Trade Thesis (March 2026)</h3>
+            <h3 className="text-white font-semibold mb-3">📋 CryptoSniper Trade Thesis (April 2026)</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
               <div className="bg-red-950/30 border border-red-900/50 rounded-lg p-3">
                 <div className="text-red-400 font-semibold mb-1">🔴 BTC Bearish</div>
                 <ul className="text-gray-400 space-y-1 text-xs">
-                  <li>• Bear flag on weekly, continuation expected</li>
-                  <li>• Targets: $47.5K → $46.5K → $37K</li>
-                  <li>• H&S neckline at $47.5K = first bounce zone</li>
-                  <li>• MicroStrategy / Saylor under pressure</li>
+                  <li>• Bear flag extending ~10 weeks on weekly</li>
+                  <li>• No reversal structures, weak volume rallies</li>
+                  <li>• Tech stocks rolling over, liquidity squeeze</li>
+                  <li>• Targets: $47.5K → $37K → $36K extreme</li>
                 </ul>
               </div>
               <div className="bg-green-950/30 border border-green-900/50 rounded-lg p-3">
                 <div className="text-green-400 font-semibold mb-1">🟢 TRX Bullish</div>
                 <ul className="text-gray-400 space-y-1 text-xs">
-                  <li>• W-bottom breakout above $0.31 neckline</li>
-                  <li>• 45-52% of USDT on TRON network</li>
-                  <li>• Stablecoin rush in credit crunch = TRX demand</li>
-                  <li>• Inverted H&S on TRX/BTC = 3.7x target</li>
+                  <li>• W-bottom + bull pennant squeezing at $0.32</li>
+                  <li>• 53% of USDT on TRON network</li>
+                  <li>• May divergence: TRX up while alts crash</li>
+                  <li>• Prediction: Tron flips Solana in market cap</li>
                 </ul>
               </div>
               <div className="bg-yellow-950/30 border border-yellow-900/50 rounded-lg p-3">
-                <div className="text-yellow-400 font-semibold mb-1">🟡 Macro Setup</div>
+                <div className="text-yellow-400 font-semibold mb-1">🟡 May Selloff</div>
                 <ul className="text-gray-400 space-y-1 text-xs">
-                  <li>• Dollar debasement accelerating (1/Gold falling)</li>
-                  <li>• Bond market collapsing, rates rising</li>
-                  <li>• Credit crunch = rush to stablecoins</li>
-                  <li>• Gold calls at $15K-$20K strike for Dec</li>
+                  <li>• &quot;Sell in May&quot; — crypto broadly sells off</li>
+                  <li>• USDT dominance pushing to 10%+ (bearish)</li>
+                  <li>• SOL -37% to ~$52, XRP to sub-$1</li>
+                  <li>• Safe havens: TRX, USDT, possibly gold</li>
                 </ul>
               </div>
             </div>
@@ -227,6 +228,7 @@ export default function Dashboard() {
 
         {/* Sidebar (1 col) */}
         <div className="lg:col-span-1 flex flex-col gap-6">
+          <SignalPanel trxPrice={prices.trx} />
           <PositionTracker trxPrice={prices.trx} btcPrice={prices.btc} />
           <KeyLevelsPanel btcPrice={prices.btc} trxPrice={prices.trx} />
         </div>
