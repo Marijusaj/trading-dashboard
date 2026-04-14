@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import {
   TRX_SIGNAL,
   getSignalStatus,
@@ -162,7 +163,30 @@ function ScalingPlan({ price, signal }: { price: number; signal: typeof TRX_SIGN
 
 export default function SignalPanel({ trxPrice }: SignalPanelProps) {
   const signal = TRX_SIGNAL;
-  const status = getSignalStatus(trxPrice, signal);
+  const [lastDailyClose, setLastDailyClose] = useState<number | undefined>(undefined);
+
+  // Fetch last completed daily candle close to distinguish intraday vs confirmed breakout
+  useEffect(() => {
+    async function fetchDailyClose() {
+      try {
+        const res = await fetch("/api/candles?symbol=TRXUSDT&interval=1d&limit=2");
+        const data = await res.json();
+        if (Array.isArray(data) && data.length >= 2) {
+          // The second-to-last candle is the last COMPLETED daily candle
+          setLastDailyClose(data[data.length - 2].close);
+        } else if (Array.isArray(data) && data.length === 1) {
+          setLastDailyClose(data[0].close);
+        }
+      } catch {
+        // If fetch fails, we'll use price-only logic (shows "testing" instead of "breakout")
+      }
+    }
+    fetchDailyClose();
+    const interval = setInterval(fetchDailyClose, 60_000); // refresh every minute
+    return () => clearInterval(interval);
+  }, []);
+
+  const status = getSignalStatus(trxPrice, signal, lastDailyClose);
   const config = SIGNAL_CONFIG[status];
 
   return (
@@ -208,6 +232,27 @@ export default function SignalPanel({ trxPrice }: SignalPanelProps) {
 
       {/* Scaling Plan */}
       <ScalingPlan price={trxPrice} signal={signal} />
+
+      {/* Daily Close Status */}
+      <div className="mt-3 bg-gray-900/40 rounded px-2 py-1.5 text-[10px]">
+        <div className="flex items-center justify-between">
+          <span className="text-gray-500">Last daily close:</span>
+          {lastDailyClose !== undefined ? (
+            <span className={`font-mono font-semibold ${lastDailyClose >= signal.breakoutLevel ? "text-green-400" : "text-amber-400"}`}>
+              ${lastDailyClose.toFixed(4)}
+              {lastDailyClose >= signal.breakoutLevel ? " ABOVE $0.32" : " below $0.32"}
+            </span>
+          ) : (
+            <span className="text-gray-600">loading...</span>
+          )}
+        </div>
+        <div className="flex items-center justify-between mt-0.5">
+          <span className="text-gray-500">Current (intraday):</span>
+          <span className={`font-mono ${trxPrice >= signal.breakoutLevel ? "text-green-400" : "text-gray-400"}`}>
+            ${trxPrice.toFixed(4)}
+          </span>
+        </div>
+      </div>
 
       {/* Francis Notes */}
       <div className="mt-3 border-t border-gray-800 pt-2">

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
+export const dynamic = "force-dynamic"; // Never cache this route on Vercel
+
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl;
   const symbol = searchParams.get("symbol") || "BTCUSDT";
@@ -19,7 +21,7 @@ export async function GET(req: NextRequest) {
           "Accept": "application/json",
           "User-Agent": "TradingDashboard/1.0",
         },
-        next: { revalidate: 60 },
+        cache: "no-store",
       });
 
       if (!res.ok) {
@@ -33,6 +35,16 @@ export async function GET(req: NextRequest) {
       if (!Array.isArray(data)) {
         console.error(`Candles API ${url} returned non-array:`, data);
         continue;
+      }
+
+      // Validate data is recent — reject if newest candle is older than 7 days
+      if (data.length > 0) {
+        const newestTs = Number(data[data.length - 1][0]);
+        const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+        if (newestTs < sevenDaysAgo) {
+          console.error(`Candles API ${url} returned stale data (newest: ${new Date(newestTs).toISOString()})`);
+          continue;
+        }
       }
 
       const candles = data.map((d: (string | number)[]) => ({
@@ -51,21 +63,30 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // Fallback: CoinGecko OHLC (limited intervals but works everywhere)
+  // Fallback: CoinGecko OHLC (works everywhere, no API key needed)
   try {
-    const coinId = symbol.replace("USDT", "").replace("USDC", "").toLowerCase();
-    const coinMap: Record<string, string> = { btc: "bitcoin", trx: "tron", eth: "ethereum" };
-    const geckoId = coinMap[coinId] || coinId;
-    const days = interval === "1d" ? 200 : interval === "4h" ? 30 : 7;
+    const coinId = symbol.replace("USDT", "").replace("USDC", "").replace("BTC", "").toLowerCase();
+    const coinMap: Record<string, string> = {
+      btc: "bitcoin", trx: "tron", eth: "ethereum",
+      sol: "solana", xrp: "ripple", bnb: "binancecoin",
+    };
+
+    // Handle pair charts (TRXBTC) — use base coin
+    const base = symbol.replace("USDT", "").replace("BTC", "").toLowerCase();
+    const geckoId = coinMap[base] || coinMap[coinId] || base;
+
+    // CoinGecko OHLC: days=90 gives 4-day candles, days=30 gives 4h candles
+    const days = interval === "1d" ? 90 : interval === "4h" ? 30 : 7;
+    const vsCurrency = symbol.endsWith("BTC") ? "btc" : "usd";
 
     const geckoRes = await fetch(
-      `https://api.coingecko.com/api/v3/coins/${geckoId}/ohlc?vs_currency=usd&days=${days}`,
-      { next: { revalidate: 120 } }
+      `https://api.coingecko.com/api/v3/coins/${geckoId}/ohlc?vs_currency=${vsCurrency}&days=${days}`,
+      { cache: "no-store" }
     );
 
     if (geckoRes.ok) {
       const data = await geckoRes.json();
-      if (Array.isArray(data)) {
+      if (Array.isArray(data) && data.length > 0) {
         const candles = data.map((d: number[]) => ({
           time: Math.floor(d[0] / 1000),
           open: d[1],
