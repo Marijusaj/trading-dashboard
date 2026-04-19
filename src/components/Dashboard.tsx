@@ -7,6 +7,7 @@ import KeyLevelsPanel from "./KeyLevelsPanel";
 import MetricsBar from "./MetricsBar";
 import PositionTracker from "./PositionTracker";
 import SignalPanel from "./SignalPanel";
+import ThesisHealth from "./ThesisHealth";
 import { BTC_LEVELS, TRX_LEVELS } from "@/lib/levels";
 import { POSITIONS } from "@/lib/positions";
 
@@ -190,6 +191,9 @@ export default function Dashboard() {
 
           {/* Debasement Chart */}
           <DebasementChart key={`debase-${refreshKey}`} goldPrice={prices.gold} />
+
+          {/* Thesis Health Check — auto-evaluates Francis's claims daily */}
+          <ThesisHealth />
 
           {/* Trade Thesis Summary */}
           <div className="bg-[#111] border border-gray-800 rounded-lg p-4">
