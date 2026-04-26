@@ -17,43 +17,20 @@ export interface ScanCandidate {
   hvf: HVFAnalysis;
 }
 
-/** Resolve symbol → instrumentId, caching in Neon. */
+/** Resolve symbol → instrumentId via the Neon cache populated by
+ *  /api/admin/discover-instruments. The eToro /market-data/search endpoint
+ *  is unreliable for crypto/equity discovery, so we don't fall back to it. */
 async function resolveInstrument(entry: UniverseEntry): Promise<number | null> {
   if (entry.instrumentId) return entry.instrumentId;
 
   const sql = db();
-  // Check cache
   const cached = await sql`
     SELECT instrument_id FROM instruments WHERE symbol = ${entry.symbol} LIMIT 1
   ` as unknown as { instrument_id: number }[];
   if (cached.length > 0) return Number(cached[0].instrument_id);
 
-  // Search via eToro
-  try {
-    const results = await etoro.searchInstruments(entry.symbol);
-    const exact = results.find(
-      (r) => r.internalSymbolFull?.toUpperCase() === entry.symbol.toUpperCase(),
-    ) || results[0];
-    if (!exact) return null;
-
-    await sql`
-      INSERT INTO instruments (instrument_id, symbol, name, asset_class, metadata)
-      VALUES (
-        ${exact.instrumentID},
-        ${entry.symbol},
-        ${exact.instrumentDisplayName || entry.display},
-        ${entry.assetClass},
-        ${JSON.stringify(exact)}::jsonb
-      )
-      ON CONFLICT (instrument_id) DO UPDATE
-        SET refreshed_at = now(),
-            metadata     = EXCLUDED.metadata
-    `;
-    return exact.instrumentID;
-  } catch (e) {
-    console.error(`Failed to resolve ${entry.symbol}:`, e);
-    return null;
-  }
+  console.warn(`[scanner] No instrument ID cached for ${entry.symbol}. Run /api/admin/discover-instruments to refresh the cache.`);
+  return null;
 }
 
 /** Pull eToro daily candles and convert to our OHLC shape. */
