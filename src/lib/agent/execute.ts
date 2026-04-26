@@ -57,6 +57,8 @@ export interface OpenTradeRequest {
   rawContext?: unknown;
   /** eToro min position size for this asset's class (CFDs require $1000+) */
   minSizeUsd?: number;
+  /** Asset class — used for market-hours guardrail */
+  assetClass?: "crypto" | "commodity" | "equity" | "etf";
 }
 
 export interface OpenTradeResult {
@@ -81,6 +83,7 @@ export async function openTrade(req: OpenTradeRequest): Promise<OpenTradeResult>
     entryPrice: req.entryPrice,
     direction: req.direction,
     minSizeUsd: req.minSizeUsd,
+    assetClass: req.assetClass,
   };
 
   // ── 1. Guardrail check ───────────────────────────────────────
@@ -167,15 +170,14 @@ export async function openTrade(req: OpenTradeRequest): Promise<OpenTradeResult>
 
     const tradeRows = await sql`
       INSERT INTO trades (
-        decision_id, environment, etoro_position_id, asset, instrument_id,
-        side, entry_price, size_usd, units, stop_loss, take_profit, leverage,
-        status
+        decision_id, environment, etoro_position_id, etoro_order_id,
+        asset, instrument_id, side, entry_price, size_usd, units,
+        stop_loss, take_profit, leverage, status
       ) VALUES (
-        ${decisionId}, ${req.env}, ${etoroPositionId || null}, ${req.asset},
-        ${req.instrumentId}, ${req.direction},
-        ${openRate}, ${req.sizeUsd},
-        ${units}, ${req.stopLoss}, ${req.takeProfit},
-        ${req.leverage}, ${tradeStatus}
+        ${decisionId}, ${req.env}, ${etoroPositionId || null}, ${placement.orderID || null},
+        ${req.asset}, ${req.instrumentId}, ${req.direction},
+        ${openRate}, ${req.sizeUsd}, ${units},
+        ${req.stopLoss}, ${req.takeProfit}, ${req.leverage}, ${tradeStatus}
       )
       RETURNING id
     ` as unknown as { id: string }[];

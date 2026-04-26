@@ -4,6 +4,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { SYSTEM_PROMPT } from "./prompt";
 import { TOOL_DEFS, handleToolCall, type AgentToolContext } from "./tools";
 import { isKillswitchActive } from "./guardrails";
+import { reconcileEnv } from "./reconcile";
 import type { AgentEnvironment } from "@/lib/neon";
 
 const MODEL = "claude-opus-4-7";              // Smartest model, 1M ctx
@@ -42,12 +43,29 @@ export async function runAgent(env: AgentEnvironment): Promise<AgentRunSummary> 
   const anthropic = new Anthropic({ apiKey });
   const ctx: AgentToolContext = { environment: env, scanCache: null };
 
-  // Build initial user message with current time + env info
+  // ── Reconcile pending/closed trades BEFORE asking the model anything ──
+  let reconcileNote = "";
+  try {
+    const r = await reconcileEnv(env);
+    const parts: string[] = [];
+    if (r.resolved_executed.length) parts.push(`${r.resolved_executed.length} pending order(s) executed since last run`);
+    if (r.resolved_cancelled.length) parts.push(`${r.resolved_cancelled.length} pending order(s) cancelled/rejected`);
+    if (r.closed_externally.length) parts.push(`${r.closed_externally.length} position(s) closed externally (TP/SL/manual)`);
+    if (r.abandoned.length) parts.push(`${r.abandoned.length} stale entry/entries abandoned (>24h pending without an order ID)`);
+    if (r.still_pending.length) parts.push(`${r.still_pending.length} order(s) still pending (e.g. weekend market)`);
+    if (parts.length > 0) reconcileNote = `\n\nReconciliation report (run before this scan):\n- ${parts.join("\n- ")}\n`;
+    if (r.errors.length > 0) reconcileNote += `\nReconcile errors: ${r.errors.join("; ")}\n`;
+  } catch (e) {
+    reconcileNote = `\n\nReconcile failed: ${e instanceof Error ? e.message : String(e)}\n`;
+  }
+
   const now = new Date();
   const initialUser = `Scan time: ${now.toISOString()}
 Environment: ${env.toUpperCase()} ${env === "real" ? "(LIVE CAPITAL — be conservative)" : "(PAPER — be active and learn)"}
+${reconcileNote}
+Run your scan + decision loop now. Start by calling scan_universe and get_open_positions in parallel, then reason about what to do.
 
-Run your scan + decision loop now. Start by calling scan_universe and get_open_positions in parallel, then reason about what to do.`;
+Important: scan results include marketIsOpen for each instrument. Do NOT attempt to open trades on markets where marketIsOpen=false (commodity CFDs are closed weekends; equities/ETFs only during NYSE hours). The guardrail will reject them anyway, but you should skip them in reasoning.`;
 
   const messages: Anthropic.MessageParam[] = [{ role: "user", content: initialUser }];
 

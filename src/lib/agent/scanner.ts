@@ -5,6 +5,7 @@ import { etoro } from "@/lib/etoro/client";
 import { db } from "@/lib/neon";
 import { analyzeHVF, type HVFAnalysis, type OHLC } from "./hvf";
 import { UNIVERSE, type UniverseEntry } from "./universe";
+import { checkMarketHours, type AssetClass } from "./market-hours";
 
 export interface ScanCandidate {
   symbol: string;
@@ -15,6 +16,8 @@ export interface ScanCandidate {
   shortAllowed: boolean;
   currentPrice: number;
   hvf: HVFAnalysis;
+  marketIsOpen: boolean;
+  marketHoursReason: string;
 }
 
 /** Resolve symbol → instrumentId via the Neon cache populated by
@@ -66,6 +69,7 @@ export async function scanUniverse(): Promise<ScanCandidate[]> {
 
       const rate = rates[0];
       const currentPrice = rate ? (rate.bid + rate.ask) / 2 : candles[candles.length - 1].close;
+      const hours = checkMarketHours(entry.assetClass as AssetClass);
 
       return {
         symbol: entry.symbol,
@@ -76,6 +80,8 @@ export async function scanUniverse(): Promise<ScanCandidate[]> {
         shortAllowed: entry.shortAllowed,
         currentPrice,
         hvf,
+        marketIsOpen: hours.isOpen,
+        marketHoursReason: hours.reason,
       };
     } catch (e) {
       console.error(`Scan failed for ${entry.symbol}:`, e);

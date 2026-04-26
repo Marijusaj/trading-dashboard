@@ -4,6 +4,7 @@
 // These are intentionally CONSERVATIVE and live in code (not prompt) so
 // the LLM cannot talk itself out of them.
 import { db } from "@/lib/neon";
+import { checkMarketHours, type AssetClass } from "./market-hours";
 import type { AgentEnvironment, GuardrailStateRow } from "@/lib/neon";
 
 export interface GuardrailLimits {
@@ -48,6 +49,8 @@ export interface ProposedTrade {
   direction: "long" | "short";
   // From universe entry — eToro min position size for this asset class
   minSizeUsd?: number;
+  // From universe entry — used for market-hours check
+  assetClass?: AssetClass;
 }
 
 export interface GuardrailResult {
@@ -123,6 +126,23 @@ export async function checkGuardrails(trade: ProposedTrade): Promise<GuardrailRe
         hint: `eToro requires min $${trade.minSizeUsd} for ${trade.asset}. Skip this asset on ${trade.environment} or pick a different setup.`,
       },
     };
+  }
+
+  // 1c. Market must be open. CFDs (commodity) closed weekends, equities
+  //     only during NYSE hours, etc. Crypto always open.
+  if (trade.assetClass) {
+    const hours = checkMarketHours(trade.assetClass);
+    if (!hours.isOpen) {
+      return {
+        allowed: false,
+        violation: "market_closed",
+        details: {
+          assetClass: trade.assetClass,
+          reason: hours.reason,
+          nextOpenUtc: hours.nextOpenUtc,
+        },
+      };
+    }
   }
 
   // 2. Leverage

@@ -163,6 +163,7 @@ export async function handleToolCall(
       return results.map((c) => ({
         symbol: c.symbol,
         display: c.display,
+        assetClass: c.assetClass,
         thesis: c.thesis,
         currentPrice: c.currentPrice,
         hvfScore: c.hvf.score,
@@ -180,6 +181,8 @@ export async function handleToolCall(
         },
         signals: c.hvf.signals,
         shortAllowed: c.shortAllowed,
+        marketIsOpen: c.marketIsOpen,
+        marketHoursReason: c.marketHoursReason,
       }));
     }
 
@@ -308,6 +311,7 @@ export async function handleToolCall(
         hvfScore: input.hvfScore,
         conviction: input.conviction,
         minSizeUsd: uEntry?.minSizeUsd,
+        assetClass: uEntry?.assetClass,
       };
       const result = await openTrade(req);
       return result;
