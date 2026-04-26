@@ -46,6 +46,8 @@ export interface ProposedTrade {
   takeProfit: number;
   entryPrice: number;
   direction: "long" | "short";
+  // From universe entry — eToro min position size for this asset class
+  minSizeUsd?: number;
 }
 
 export interface GuardrailResult {
@@ -101,12 +103,25 @@ export async function checkGuardrails(trade: ProposedTrade): Promise<GuardrailRe
   const limits = LIMITS[trade.environment];
   const state = await maybeResetDaily(trade.environment, await loadState(trade.environment));
 
-  // 1. Position size
+  // 1a. Position size — must be at most env max
   if (trade.sizeUsd > limits.maxPositionSizeUsd) {
     return {
       allowed: false,
       violation: "max_position_size",
       details: { proposed: trade.sizeUsd, max: limits.maxPositionSizeUsd },
+    };
+  }
+
+  // 1b. Position size — must clear eToro's per-asset minimum
+  if (trade.minSizeUsd && trade.sizeUsd < trade.minSizeUsd) {
+    return {
+      allowed: false,
+      violation: "below_etoro_min_size",
+      details: {
+        proposed: trade.sizeUsd,
+        min: trade.minSizeUsd,
+        hint: `eToro requires min $${trade.minSizeUsd} for ${trade.asset}. Skip this asset on ${trade.environment} or pick a different setup.`,
+      },
     };
   }
 

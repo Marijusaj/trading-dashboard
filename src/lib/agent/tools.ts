@@ -185,22 +185,46 @@ export async function handleToolCall(
 
     case "get_open_positions": {
       const sql = db();
-      const rows = await sql`
+      const agentTrades = await sql`
         SELECT id, asset, side, entry_price, size_usd, stop_loss, take_profit,
                leverage, opened_at, etoro_position_id
           FROM trades
          WHERE environment = ${ctx.environment} AND status = 'open'
          ORDER BY opened_at DESC
       ` as unknown as Array<{ id: string; asset: string; side: string; entry_price: number; size_usd: number; stop_loss: number; take_profit: number; leverage: number; opened_at: string; etoro_position_id: string }>;
-      return rows;
+
+      // Also surface OWN eToro positions opened outside the agent
+      // (manual trades the user placed). The agent should NOT close
+      // these, but should be aware when sizing new entries.
+      const portfolio = await etoro.getPortfolio(ctx.environment);
+      const agentPositionIds = new Set(agentTrades.map((t) => t.etoro_position_id).filter(Boolean));
+      const userManualPositions = portfolio.positions.filter(
+        (p) => !agentPositionIds.has(p.positionID),
+      );
+      return {
+        agentTrades,
+        userManualPositions: userManualPositions.map((p) => ({
+          positionID: p.positionID,
+          instrumentID: p.instrumentID,
+          side: p.isBuy ? "long" : "short",
+          openRate: p.openRate,
+          amountUsd: p.amountInDollars,
+          openDate: p.openDateTime,
+          unrealizedPnL: p.netProfit,
+        })),
+        note: "Agent should NOT close userManualPositions — those were opened by the human and are out of scope.",
+      };
     }
 
     case "get_account_equity": {
       const portfolio = await etoro.getPortfolio(ctx.environment);
       return {
         cash: portfolio.credit,
-        positionsCount: (portfolio.positions || []).length,
-        ordersCount: (portfolio.orders || []).length,
+        ownPositionsCount: portfolio.positions.length,
+        mirrorPositionsCount: portfolio.mirrorPositions.length,
+        pendingOrdersCount: portfolio.pendingOrders.length,
+        // Hint to the agent — only ownPositions count toward our limits
+        note: "ownPositionsCount excludes copy-trader (mirror) positions which the agent does not control",
       };
     }
 
@@ -267,6 +291,9 @@ export async function handleToolCall(
       if (!cand) {
         return { error: `Symbol ${input.symbol} not in latest scan. Call scan_universe first.` };
       }
+      // Resolve universe entry to surface eToro min size in guardrail check
+      const { getUniverseEntry } = await import("./universe");
+      const uEntry = getUniverseEntry(input.symbol);
       const req: OpenTradeRequest = {
         env: ctx.environment,
         asset: input.symbol,
@@ -280,6 +307,7 @@ export async function handleToolCall(
         reasoning: input.reasoning,
         hvfScore: input.hvfScore,
         conviction: input.conviction,
+        minSizeUsd: uEntry?.minSizeUsd,
       };
       const result = await openTrade(req);
       return result;

@@ -74,28 +74,44 @@ export async function POST(req: NextRequest) {
   try {
     const sql = db();
 
-    // Pull just enough of eToro's instrument catalog to find our 15 symbols.
-    // listInstruments uses parallel pagination + stopWhen for an early bail.
-    const matches: Record<string, { instrumentID: number; symbolFull: string; displayName: string } | null> = {};
-    const wanted = new Set(UNIVERSE.map((u) => u.symbol));
-
-    const instruments = await etoro.listInstruments("paper", 500, (items) => {
-      // Update matches incrementally; stop when all universe symbols found
-      for (const u of UNIVERSE) {
-        if (matches[u.symbol]) continue;
-        const found = items.find((m) => matchesUniverse(m, u.symbol));
-        if (found) {
-          matches[u.symbol] = {
-            instrumentID: found.instrumentID,
-            symbolFull: found.symbolFull,
-            displayName: found.instrumentDisplayName,
-          };
-          wanted.delete(u.symbol);
-        }
-      }
-      return wanted.size === 0;
-    });
+    // Pull the FULL catalog so we can pick the asset-class-correct match
+    // (e.g. "TRON Inc" stock vs "TRX" crypto — both match "TRON" alias).
+    const instruments = await etoro.listInstruments("paper", 500);
     const totalSeen = instruments.length;
+
+    const matches: Record<string, { instrumentID: number; symbolFull: string; displayName: string; instrumentTypeID: number } | null> = {};
+
+    // Asset class → expected instrumentTypeID (best-effort)
+    const expectedTypeId: Record<string, number[]> = {
+      crypto: [10],
+      commodity: [6],
+      equity: [11],
+      etf: [7],
+    };
+
+    for (const u of UNIVERSE) {
+      const candidates = instruments.filter((m) => matchesUniverse(m, u.symbol));
+      // Prefer matches whose instrumentTypeID matches our expected asset class
+      const expected = expectedTypeId[u.assetClass] || [];
+      const ranked = candidates.sort((a, b) => {
+        const aMatch = expected.includes(a.instrumentTypeID) ? 0 : 1;
+        const bMatch = expected.includes(b.instrumentTypeID) ? 0 : 1;
+        if (aMatch !== bMatch) return aMatch - bMatch;
+        // Tiebreak: prefer EXACT symbolFull match
+        const aExact = a.symbolFull?.toUpperCase() === u.symbol ? 0 : 1;
+        const bExact = b.symbolFull?.toUpperCase() === u.symbol ? 0 : 1;
+        return aExact - bExact;
+      });
+      const best = ranked[0];
+      matches[u.symbol] = best
+        ? {
+            instrumentID: best.instrumentID,
+            symbolFull: best.symbolFull,
+            displayName: best.instrumentDisplayName,
+            instrumentTypeID: best.instrumentTypeID,
+          }
+        : null;
+    }
 
     // Mark unmatched
     for (const u of UNIVERSE) {

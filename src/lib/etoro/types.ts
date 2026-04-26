@@ -86,3 +86,29 @@ export interface EtoroOpenPositionResult {
   stopLossRate?: number;
   takeProfitRate?: number;
 }
+
+/** Result of placing a market order — order goes into a queue first.
+ *  The agent receives this immediately, then polls for terminal state. */
+export interface EtoroOrderPlacement {
+  orderID: string;
+  initialStatusID: number;
+  amountQueued: number;
+  unitsQueued: number;
+}
+
+/** Detailed order info from /trading/info/{env}/orders/{orderId}.
+ *  statusID enum: 0=Pending, 1=Executed, 2=Cancelled, 3=Rejected,
+ *                 4=PartiallyExecuted, 11=PendingMarketOpen (undocumented,
+ *                 observed when market closed for weekend on CFDs). */
+export interface EtoroOrderInfo {
+  orderID: string;
+  instrumentID: number;
+  amount: number;
+  units: number;
+  statusID: number;
+  errorCode: number;
+  errorMessage?: string;
+  positionID?: string | null;        // populated once status=1
+  openRate?: number | null;
+  requestOccurred?: string;
+}

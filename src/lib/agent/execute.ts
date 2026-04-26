@@ -118,49 +118,92 @@ export async function openTrade(req: OpenTradeRequest): Promise<OpenTradeResult>
   ` as unknown as { id: string }[];
   const decisionId = decRows[0].id;
 
-  // ── 3. Place order on eToro ──────────────────────────────────
+  // ── 3. Place order + poll until terminal ─────────────────────
   try {
-    const result = await etoro.openPositionByAmount(req.env, {
-      instrumentID: req.instrumentId,
-      isBuy: req.direction === "long",
-      amount: req.sizeUsd,
-      leverage: req.leverage,
-      stopLossRate: req.stopLoss,
-      takeProfitRate: req.takeProfit,
-    });
+    const { placement, finalInfo, outcome } = await etoro.openPositionAndAwait(
+      req.env,
+      {
+        instrumentID: req.instrumentId,
+        isBuy: req.direction === "long",
+        amount: req.sizeUsd,
+        leverage: req.leverage,
+        stopLossRate: req.stopLoss,
+        takeProfitRate: req.takeProfit,
+      },
+      { maxWaitMs: 12_000, intervalMs: 1_500 },
+    );
 
-    // ── 4. Record trade ───────────────────────────────────────
+    // ── REJECTED / CANCELLED ─────────────────────────────────
+    if (outcome === "rejected" || outcome === "cancelled") {
+      const errMsg = finalInfo.errorMessage
+        ? `${finalInfo.errorMessage} (errorCode ${finalInfo.errorCode})`
+        : `Order ${outcome} (statusID ${finalInfo.statusID})`;
+      await sql`
+        UPDATE agent_decisions
+           SET outcome_status      = 'failed',
+               reasoning           = ${req.reasoning + ` | ${outcome.toUpperCase()}: ${errMsg}`},
+               raw_context         = ${JSON.stringify({ proposed: req, placement, finalInfo })}::jsonb
+         WHERE id = ${decisionId}
+      `;
+      return {
+        decisionId,
+        tradeId: null,
+        etoroPositionId: null,
+        status: "failed",
+        message: errMsg,
+        guardrailViolation: null,
+      };
+    }
+
+    // ── EXECUTED, PENDING (polling timed out), or PENDING_MARKET_OPEN
+    // Persist trade in all three cases; status tracks reality.
+    const tradeStatus = outcome === "executed" ? "open" : "open"; // pending also kept as open; reconciler updates later
+    const etoroPositionId = finalInfo.positionID || ""; // empty when pending
+    const openRate = finalInfo.openRate ?? req.entryPrice;
+    const units = finalInfo.units || placement.unitsQueued || null;
+
     const tradeRows = await sql`
       INSERT INTO trades (
         decision_id, environment, etoro_position_id, asset, instrument_id,
         side, entry_price, size_usd, units, stop_loss, take_profit, leverage,
         status
       ) VALUES (
-        ${decisionId}, ${req.env}, ${String(result.positionID)}, ${req.asset},
+        ${decisionId}, ${req.env}, ${etoroPositionId || null}, ${req.asset},
         ${req.instrumentId}, ${req.direction},
-        ${result.openRate || req.entryPrice}, ${req.sizeUsd},
-        ${result.units || null}, ${req.stopLoss}, ${req.takeProfit},
-        ${req.leverage}, 'open'
+        ${openRate}, ${req.sizeUsd},
+        ${units}, ${req.stopLoss}, ${req.takeProfit},
+        ${req.leverage}, ${tradeStatus}
       )
       RETURNING id
     ` as unknown as { id: string }[];
     const tradeId = tradeRows[0].id;
 
+    const decOutcome = outcome === "executed" ? "executed" : "pending";
     await sql`
       UPDATE agent_decisions
-         SET outcome_status = 'executed',
-             trade_id       = ${tradeId}
+         SET outcome_status = ${decOutcome},
+             trade_id       = ${tradeId},
+             raw_context    = ${JSON.stringify({ proposed: req, placement, finalInfo, outcome })}::jsonb
        WHERE id = ${decisionId}
     `;
 
-    await recordEntry(req.env);
+    if (outcome === "executed") {
+      await recordEntry(req.env);
+    }
+
+    const verb =
+      outcome === "executed"
+        ? `Opened ${req.direction} ${req.asset} @ ${openRate}`
+        : outcome === "pending_market_open"
+        ? `Order queued for market open (${req.direction} ${req.asset}, $${req.sizeUsd})`
+        : `Order pending — poll timed out (orderID ${placement.orderID})`;
 
     return {
       decisionId,
       tradeId,
-      etoroPositionId: String(result.positionID),
-      status: "executed",
-      message: `Opened ${req.direction} ${req.asset} @ ${result.openRate}, size $${req.sizeUsd}, SL ${req.stopLoss}, TP ${req.takeProfit}`,
+      etoroPositionId: etoroPositionId || null,
+      status: outcome === "executed" ? "executed" : "skipped_guardrail",
+      message: `${verb}, SL ${req.stopLoss}, TP ${req.takeProfit}`,
       guardrailViolation: null,
     };
   } catch (e) {

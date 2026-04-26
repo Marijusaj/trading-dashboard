@@ -15,7 +15,8 @@ import { randomUUID } from "node:crypto";
 import {
   EtoroCandle,
   EtoroEnv,
-  EtoroOpenPositionResult,
+  EtoroOrderInfo,
+  EtoroOrderPlacement,
   EtoroPortfolio,
   EtoroPosition,
   EtoroRate,
@@ -151,6 +152,13 @@ interface PnlResponse {
     stockOrders?: unknown[];
     entryOrders?: unknown[];
     exitOrders?: unknown[];
+    ordersForOpen?: Array<{
+      orderID: number;
+      instrumentID: number;
+      isBuy: boolean;
+      amount: number;
+      statusID: number;
+    }>;
   };
 }
 
@@ -242,18 +250,34 @@ export const etoro = {
   /**
    * GET /trading/info/{env}/pnl returns:
    *   { clientPortfolio: { credit, unrealizedPnL, positions[], mirrors[], orders[], ... } }
-   * We flatten to our domain EtoroPortfolio shape and unwrap mirror positions.
+   *
+   * IMPORTANT: only `positions[]` are user-owned (CFD/manual trades).
+   * `mirrors[].positions[]` are positions opened by traders the user
+   * is COPYING — the agent does not own these and must not consider
+   * them when sizing or counting open positions for guardrails.
    */
-  async getPortfolio(env: EtoroEnv): Promise<EtoroPortfolio> {
+  async getPortfolio(env: EtoroEnv): Promise<EtoroPortfolio & {
+    mirrorPositions: EtoroPosition[];
+    pendingOrders: Array<{ orderID: string; instrumentID: number; isBuy: boolean; amount: number; statusID: number }>;
+  }> {
     const raw = await request<PnlResponse>(env, `/trading/info/${envToPath(env)}/pnl`);
     const cp = raw.clientPortfolio || {};
-    const positions = cp.positions || [];
+    const ownPositions = cp.positions || [];
     const mirrorPositions = (cp.mirrors || []).flatMap((m) => m.positions || []);
+    const pendingOrders = (cp.ordersForOpen || []).map((o) => ({
+      orderID: String(o.orderID),
+      instrumentID: o.instrumentID,
+      isBuy: o.isBuy,
+      amount: o.amount,
+      statusID: o.statusID,
+    }));
     return {
       credit: Number(cp.credit ?? 0),
-      positions: [...positions, ...mirrorPositions].map(rawPositionToDomain),
+      positions: ownPositions.map(rawPositionToDomain),
       orders: [],
       totalUnrealizedPnL: cp.unrealizedPnL,
+      mirrorPositions: mirrorPositions.map(rawPositionToDomain),
+      pendingOrders,
     };
   },
 
@@ -395,7 +419,16 @@ export const etoro = {
   },
 
   // ── Trading ────────────────────────────────────────────────────
-  async openPositionByAmount(
+  /**
+   * Place a market order. eToro returns immediately with an order in the
+   * queue (`{ orderForOpen: { orderID, statusID, ... } }`). The order
+   * may then transition to executed / partial / rejected / cancelled.
+   * Caller should poll getOrderInfo(orderID) until terminal.
+   *
+   * Note: leveraged CFDs (gold, silver) require minimum $1000 — anything
+   * less returns errorCode 720. Crypto allows ~$10 minimums.
+   */
+  async placeMarketOrder(
     env: EtoroEnv,
     args: {
       instrumentID: number;
@@ -405,7 +438,7 @@ export const etoro = {
       stopLossRate: number;
       takeProfitRate: number;
     },
-  ): Promise<EtoroOpenPositionResult> {
+  ): Promise<EtoroOrderPlacement> {
     const body = {
       InstrumentID: args.instrumentID,
       IsBuy: args.isBuy,
@@ -414,21 +447,133 @@ export const etoro = {
       StopLossRate: args.stopLossRate,
       TakeProfitRate: args.takeProfitRate,
     };
-    const raw = await request<Record<string, unknown>>(
+    interface PlaceRaw {
+      orderForOpen?: {
+        orderID?: number | string;
+        statusID?: number;
+        amount?: number;
+        amountInUnits?: number;
+        units?: number;
+      };
+    }
+    const raw = await request<PlaceRaw>(
       env,
       `/trading/execution/${envToPath(env)}/market-open-orders/by-amount`,
       { method: "POST", body },
     );
+    const o = raw.orderForOpen || {};
     return {
-      positionID: String(raw.positionID ?? raw.PositionID ?? ""),
-      instrumentID: Number(raw.instrumentID ?? raw.InstrumentID ?? args.instrumentID),
-      units: Number(raw.units ?? raw.Units ?? 0),
-      openRate: Number(raw.openRate ?? raw.OpenRate ?? 0),
-      isBuy: Boolean(raw.isBuy ?? raw.IsBuy ?? args.isBuy),
-      amountInDollars: (raw.amount as number | undefined) ?? args.amount,
-      stopLossRate: raw.stopLossRate as number | undefined,
-      takeProfitRate: raw.takeProfitRate as number | undefined,
+      orderID: String(o.orderID ?? ""),
+      initialStatusID: Number(o.statusID ?? 0),
+      amountQueued: Number(o.amount ?? args.amount),
+      unitsQueued: Number(o.units ?? o.amountInUnits ?? 0),
     };
+  },
+
+  /** GET /trading/info/{env}/orders/{orderId} */
+  async getOrderInfo(env: EtoroEnv, orderId: string): Promise<EtoroOrderInfo> {
+    interface RawInfo {
+      orderID?: number | string;
+      instrumentID?: number;
+      amount?: number;
+      units?: number;
+      statusID?: number;
+      errorCode?: number;
+      errorMessage?: string;
+      requestOccurred?: string;
+      positions?: { positionID?: number | string; openRate?: number }[];
+    }
+    const raw = await request<RawInfo>(env, `/trading/info/${envToPath(env)}/orders/${encodeURIComponent(orderId)}`);
+    const firstPos = raw.positions?.[0];
+    return {
+      orderID: String(raw.orderID ?? orderId),
+      instrumentID: Number(raw.instrumentID ?? 0),
+      amount: Number(raw.amount ?? 0),
+      units: Number(raw.units ?? 0),
+      statusID: Number(raw.statusID ?? 0),
+      errorCode: Number(raw.errorCode ?? 0),
+      errorMessage: raw.errorMessage,
+      positionID: firstPos?.positionID ? String(firstPos.positionID) : null,
+      openRate: firstPos?.openRate ?? null,
+      requestOccurred: raw.requestOccurred,
+    };
+  },
+
+  /** Cancel a pending market-open order. */
+  async cancelOpenOrder(env: EtoroEnv, orderId: string): Promise<{ token: string }> {
+    const raw = await request<{ token?: string }>(
+      env,
+      `/trading/execution/${envToPath(env)}/market-open-orders/${encodeURIComponent(orderId)}`,
+      { method: "DELETE" },
+    );
+    return { token: String(raw.token ?? "") };
+  },
+
+  /**
+   * Convenience wrapper: place an order and poll until terminal.
+   * - On success (statusID 1): returns positionID + openRate
+   * - On rejection (statusID 3 or errorCode != 0): returns rejected status
+   * - On weekend pending (statusID 11): returns "pending_market_open" — caller decides
+   * - On polling timeout: returns pending — caller can reconcile later
+   */
+  async openPositionAndAwait(
+    env: EtoroEnv,
+    args: {
+      instrumentID: number;
+      isBuy: boolean;
+      amount: number;
+      leverage?: number;
+      stopLossRate: number;
+      takeProfitRate: number;
+    },
+    pollOpts: { maxWaitMs?: number; intervalMs?: number } = {},
+  ): Promise<{
+    placement: EtoroOrderPlacement;
+    finalInfo: EtoroOrderInfo;
+    outcome: "executed" | "rejected" | "cancelled" | "pending" | "pending_market_open";
+  }> {
+    const placement = await this.placeMarketOrder(env, args);
+    const maxWait = pollOpts.maxWaitMs ?? 15_000;
+    const interval = pollOpts.intervalMs ?? 1_500;
+    const deadline = Date.now() + maxWait;
+
+    let info: EtoroOrderInfo = {
+      orderID: placement.orderID,
+      instrumentID: args.instrumentID,
+      amount: placement.amountQueued,
+      units: placement.unitsQueued,
+      statusID: placement.initialStatusID,
+      errorCode: 0,
+      positionID: null,
+      openRate: null,
+    };
+
+    while (Date.now() < deadline) {
+      try {
+        info = await this.getOrderInfo(env, placement.orderID);
+      } catch {
+        // ignore transient lookup errors during polling
+      }
+      // Terminal states:
+      if (info.errorCode && info.errorCode !== 0) {
+        return { placement, finalInfo: info, outcome: "rejected" };
+      }
+      if (info.statusID === 1) {
+        return { placement, finalInfo: info, outcome: "executed" };
+      }
+      if (info.statusID === 2) {
+        return { placement, finalInfo: info, outcome: "cancelled" };
+      }
+      if (info.statusID === 3) {
+        return { placement, finalInfo: info, outcome: "rejected" };
+      }
+      if (info.statusID === 11) {
+        // Market closed (weekend on CFDs) — order will fire at open
+        return { placement, finalInfo: info, outcome: "pending_market_open" };
+      }
+      await new Promise((r) => setTimeout(r, interval));
+    }
+    return { placement, finalInfo: info, outcome: "pending" };
   },
 
   async closePosition(
