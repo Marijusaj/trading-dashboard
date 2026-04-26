@@ -55,6 +55,8 @@ export interface OpenTradeRequest {
   hvfScore: number;
   conviction: "high" | "medium" | "low";
   rawContext?: unknown;
+  /** eToro min position size for this asset's class (CFDs require $1000+) */
+  minSizeUsd?: number;
 }
 
 export interface OpenTradeResult {
@@ -78,6 +80,7 @@ export async function openTrade(req: OpenTradeRequest): Promise<OpenTradeResult>
     takeProfit: req.takeProfit,
     entryPrice: req.entryPrice,
     direction: req.direction,
+    minSizeUsd: req.minSizeUsd,
   };
 
   // ── 1. Guardrail check ───────────────────────────────────────
