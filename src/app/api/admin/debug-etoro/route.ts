@@ -92,6 +92,40 @@ export async function GET(req: NextRequest) {
   const testOpen = req.nextUrl.searchParams.get("testOpen") === "1";
   const cancelOrderIds = req.nextUrl.searchParams.get("cancelOrders");
   const lookupOrderIds = req.nextUrl.searchParams.get("lookupOrders");
+  const abandonTradeId = req.nextUrl.searchParams.get("abandonTrade");
+
+  // One-off DB action: mark a stale agent trade as abandoned and
+  // decrement open_position_count. Use when reconciler can't yet
+  // resolve a row (e.g. legacy entries with no etoro_order_id).
+  if (abandonTradeId) {
+    const { db } = await import("@/lib/neon");
+    const sql = db();
+    const rows = (await sql`
+      UPDATE trades
+         SET status        = 'abandoned',
+             closed_at     = now(),
+             exit_reason   = 'expired',
+             reconciled_at = now()
+       WHERE id = ${abandonTradeId} AND status = 'open'
+       RETURNING id, environment
+    `) as unknown as { id: string; environment: "paper" | "real" }[];
+    if (rows.length > 0) {
+      // Defensive: re-derive open count from reality
+      await sql`
+        UPDATE guardrail_state gs
+           SET open_position_count = (
+             SELECT COUNT(*)::int FROM trades
+              WHERE environment = gs.environment
+                AND status = 'open'
+                AND etoro_position_id IS NOT NULL
+                AND etoro_position_id <> ''
+           )
+         WHERE environment = ${rows[0].environment}
+      `;
+      return NextResponse.json({ ok: true, abandoned: rows[0] });
+    }
+    return NextResponse.json({ ok: false, message: "Trade not found or not open" });
+  }
 
   // Surface env-var presence (just lengths — never the actual keys)
   const envState = {
