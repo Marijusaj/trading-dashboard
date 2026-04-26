@@ -3,7 +3,7 @@
 //        https://<domain>/api/admin/migrate
 // Idempotent — uses CREATE TABLE IF NOT EXISTS.
 import { NextRequest, NextResponse } from "next/server";
-import { neon } from "@neondatabase/serverless";
+import { db } from "@/lib/neon";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
@@ -51,13 +51,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const url = process.env.DATABASE_URL;
-  if (!url) {
-    return NextResponse.json({ error: "DATABASE_URL not set" }, { status: 500 });
-  }
-
   try {
-    const sql = neon(url);
+    const sql = db();
     const migrationsDir = join(process.cwd(), "db", "migrations");
     const files = readdirSync(migrationsDir).filter((f) => f.endsWith(".sql")).sort();
 

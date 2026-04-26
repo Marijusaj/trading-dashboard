@@ -10,13 +10,43 @@ neonConfig.fetchConnectionCache = true;
 
 let _sql: ReturnType<typeof neon> | null = null;
 
+/** Find the Postgres connection string under any of the standard names
+ *  Vercel + Neon may inject. Pooled URLs are preferred for serverless;
+ *  unpooled is the fallback. We also support the auto-namespaced form
+ *  Vercel uses when the integration is bound to a specific project
+ *  (e.g. `trading_dashboard_POSTGRES_URL`).
+ */
+function resolveDatabaseUrl(): string | null {
+  const candidates = [
+    // Standard names
+    "DATABASE_URL",
+    "POSTGRES_URL",
+    "POSTGRES_PRISMA_URL",
+    // Vercel-Neon integration auto-injected (pooled — preferred)
+    "trading_dashboard_DATABASE_URL",
+    "trading_dashboard_POSTGRES_URL",
+    "trading_dashboard_POSTGRES_PRISMA_URL",
+    // Unpooled fallbacks
+    "DATABASE_URL_UNPOOLED",
+    "POSTGRES_URL_NON_POOLING",
+    "trading_dashboard_DATABASE_URL_UNPOOLED",
+    "trading_dashboard_POSTGRES_URL_NON_POOLING",
+  ];
+  for (const name of candidates) {
+    const v = process.env[name];
+    if (v && v.length > 0) return v;
+  }
+  return null;
+}
+
 export function db(): ReturnType<typeof neon> {
   if (_sql) return _sql;
-  const url = process.env.DATABASE_URL;
+  const url = resolveDatabaseUrl();
   if (!url) {
     throw new Error(
-      "Missing DATABASE_URL — Neon integration not configured. " +
-        "Add the Neon Postgres integration to this project in Vercel.",
+      "No Neon Postgres URL found. Looked for DATABASE_URL, POSTGRES_URL, " +
+        "trading_dashboard_POSTGRES_URL, and unpooled variants. " +
+        "Verify the Neon integration is bound to this Vercel project.",
     );
   }
   _sql = neon(url);
