@@ -214,7 +214,7 @@ export async function closeTrade(req: CloseTradeRequest): Promise<{ ok: boolean;
   if (!trade.etoro_position_id) return { ok: false, message: "Trade has no eToro position ID" };
 
   try {
-    await etoro.closePosition(req.env, trade.etoro_position_id);
+    await etoro.closePosition(req.env, trade.etoro_position_id, Number(trade.instrument_id));
   } catch (e) {
     return { ok: false, message: `eToro close failed: ${e instanceof Error ? e.message : String(e)}` };
   }
@@ -224,7 +224,7 @@ export async function closeTrade(req: CloseTradeRequest): Promise<{ ok: boolean;
   let pnlUsd = 0;
   let rMultiple: number | null = null;
   try {
-    const rates = await etoro.getRates([Number(trade.instrument_id)]);
+    const rates = await etoro.getRates([Number(trade.instrument_id)], req.env);
     if (rates.length > 0) {
       exitPrice = (rates[0].bid + rates[0].ask) / 2;
       const direction = trade.side === "long" ? 1 : -1;

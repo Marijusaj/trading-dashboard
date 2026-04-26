@@ -35,7 +35,7 @@ async function snapshotEnv(env: EtoroEnv): Promise<EnvSnapshot> {
     let rates: EtoroRate[] = [];
     if (instrumentIds.length > 0) {
       try {
-        rates = await etoro.getRates(instrumentIds);
+        rates = await etoro.getRates(instrumentIds, env);
       } catch {
         // Rates failure is non-fatal — show position without live PnL
       }

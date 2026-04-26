@@ -80,7 +80,7 @@ export async function scanUniverse(): Promise<ScanCandidate[]> {
 
       const [candles, rates] = await Promise.all([
         getCandlesFor(instrumentId),
-        etoro.getRates([instrumentId]),
+        etoro.getRates([instrumentId], "paper"),
       ]);
 
       if (candles.length < 60) return null;

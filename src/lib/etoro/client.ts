@@ -1,13 +1,17 @@
 // eToro Public API client.
-// Docs: https://api-portal.etoro.com/
+// Docs: https://api-portal.etoro.com/api-reference/
+// Base URL: https://public-api.etoro.com/api/v1
 //
-// Auth (header-based):
+// Auth (header-based, ALL endpoints require x-user-key):
 //   x-api-key:     <ETORO_PUBLIC_KEY>     — single application key, both envs
 //   x-user-key:    <ETORO_REAL_API_KEY | ETORO_PAPER_API_KEY> — per account
 //   x-request-id:  uuid v4                — required, unique per request
 //
-// URL pattern: /trading/{demo|real}/...
+// URL pattern: /trading/{info|execution}/{demo|real}/...
 //   "demo" maps to our "paper" env label.
+//
+// Field convention: request bodies use PascalCase (InstrumentID, IsBuy,
+// Amount, etc) per OpenAPI spec.
 import { randomUUID } from "node:crypto";
 import {
   EtoroCandle,
@@ -28,7 +32,7 @@ export class EtoroAPIError extends Error {
     public readonly endpoint: string,
     public readonly body: string,
   ) {
-    super(`eToro ${status} on ${endpoint}: ${message}`);
+    super(`eToro ${status} on ${endpoint}: ${message} | body=${body.slice(0, 200)}`);
   }
 }
 
@@ -50,12 +54,17 @@ interface RequestOptions {
   method?: "GET" | "POST" | "PUT" | "DELETE";
   body?: unknown;
   query?: Record<string, string | number | boolean | undefined>;
-  // Retry on 429/5xx
   retries?: number;
 }
 
+/**
+ * Make an authed eToro request.
+ * `env` MUST be supplied — eToro requires `x-user-key` on every endpoint,
+ * including market-data. We default to paper when only doing market data
+ * to avoid burning real-account quotas.
+ */
 async function request<T>(
-  env: EtoroEnv | null,           // null = market-data endpoints (no env)
+  env: EtoroEnv,
   path: string,
   opts: RequestOptions = {},
 ): Promise<T> {
@@ -70,10 +79,10 @@ async function request<T>(
 
   const headers: Record<string, string> = {
     "x-api-key": publicKey(),
+    "x-user-key": userKeyFor(env),
     "x-request-id": randomUUID(),
     "Accept": "application/json",
   };
-  if (env) headers["x-user-key"] = userKeyFor(env);
   if (body !== undefined) headers["Content-Type"] = "application/json";
 
   let lastErr: EtoroAPIError | null = null;
@@ -86,7 +95,6 @@ async function request<T>(
     });
 
     if (res.ok) {
-      // Some DELETE endpoints return empty body
       const text = await res.text();
       if (!text) return {} as T;
       try {
@@ -104,7 +112,6 @@ async function request<T>(
       errBody.slice(0, 500),
     );
 
-    // Retry on 429 (rate limited) or 5xx
     if (attempt < retries && (res.status === 429 || res.status >= 500)) {
       const backoffMs = 500 * Math.pow(2, attempt) + Math.random() * 250;
       await new Promise((r) => setTimeout(r, backoffMs));
@@ -117,89 +124,208 @@ async function request<T>(
 }
 
 // ────────────────────────────────────────────────────────────────────
+// Response shapes that differ from our domain types
+// ────────────────────────────────────────────────────────────────────
+
+/** /trading/info/{env}/pnl response — best-effort typing.
+ *  Maps to our EtoroPortfolio shape. */
+interface PnlResponse {
+  credit?: number;
+  positions?: Array<{
+    positionID?: string | number;
+    PositionID?: string | number;
+    instrumentID?: number;
+    InstrumentID?: number;
+    isBuy?: boolean;
+    IsBuy?: boolean;
+    units?: number;
+    Units?: number;
+    openRate?: number;
+    OpenRate?: number;
+    amountInDollars?: number;
+    AmountInDollars?: number;
+    leverage?: number;
+    Leverage?: number;
+    stopLossRate?: number;
+    StopLossRate?: number;
+    takeProfitRate?: number;
+    TakeProfitRate?: number;
+    openDateTime?: string;
+    OpenDateTime?: string;
+    netProfit?: number;
+    NetProfit?: number;
+  }>;
+  Positions?: PnlResponse["positions"];
+  orders?: PnlResponse["positions"];
+  Orders?: PnlResponse["positions"];
+  totalRealizedEquity?: number;
+  TotalRealizedEquity?: number;
+  totalUnrealizedPnL?: number;
+  TotalUnrealizedPnL?: number;
+}
+
+function normalizePosition<T extends Record<string, unknown>>(p: T): Record<string, unknown> {
+  // eToro responses sometimes use PascalCase, sometimes camelCase.
+  // Normalize to camelCase for our consumers.
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(p)) {
+    const camel = k.charAt(0).toLowerCase() + k.slice(1);
+    out[camel] = v;
+  }
+  return out;
+}
+
+function normalizePnl(r: PnlResponse): EtoroPortfolio {
+  const positions = (r.positions || r.Positions || []).map((p) => normalizePosition(p));
+  const orders = (r.orders || r.Orders || []).map((o) => normalizePosition(o));
+  return {
+    credit: r.credit ?? 0,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    positions: positions as any,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    orders: orders as any,
+    totalRealizedEquity: r.totalRealizedEquity ?? r.TotalRealizedEquity,
+    totalUnrealizedPnL: r.totalUnrealizedPnL ?? r.TotalUnrealizedPnL,
+  };
+}
+
+// ────────────────────────────────────────────────────────────────────
 // Public API surface
 // ────────────────────────────────────────────────────────────────────
 
+const SEARCH_FIELDS = "instrumentID,internalSymbolFull,instrumentDisplayName,instrumentTypeID,exchangeID,isActive,precision";
+
+const CANDLE_PERIOD_MAP = {
+  "OneMinute": "OneMinute",
+  "OneHour": "OneHour",
+  "OneDay": "OneDay",
+  "OneWeek": "OneWeek",
+} as const;
+
 export const etoro = {
-  // ── Portfolio (per-env) ────────────────────────────────────────
+  // ── Portfolio + PnL ────────────────────────────────────────────
   async getPortfolio(env: EtoroEnv): Promise<EtoroPortfolio> {
-    return request<EtoroPortfolio>(env, `/trading/${envToPath(env)}/portfolio`);
+    const raw = await request<PnlResponse>(env, `/trading/info/${envToPath(env)}/pnl`);
+    return normalizePnl(raw);
   },
 
-  // ── Market data (no env required) ──────────────────────────────
-  async searchInstruments(query: string): Promise<EtoroInstrument[]> {
-    const data = await request<{ instruments?: EtoroInstrument[] } | EtoroInstrument[]>(
-      null,
-      "/market-data/search",
-      { query: { internalSymbolFull: query } },
-    );
+  // ── Market data (still needs x-user-key per docs) ──────────────
+  async searchInstruments(query: string, env: EtoroEnv = "paper"): Promise<EtoroInstrument[]> {
+    interface SearchResponse {
+      instruments?: EtoroInstrument[];
+      data?: EtoroInstrument[];
+    }
+    const data = await request<SearchResponse | EtoroInstrument[]>(env, "/market-data/search", {
+      query: { searchText: query, fields: SEARCH_FIELDS, pageSize: 20 },
+    });
     if (Array.isArray(data)) return data;
-    return data.instruments || [];
+    return data.instruments || data.data || [];
   },
 
-  async getRates(instrumentIds: number[]): Promise<EtoroRate[]> {
+  async getRates(instrumentIds: number[], env: EtoroEnv = "paper"): Promise<EtoroRate[]> {
     if (instrumentIds.length === 0) return [];
-    const data = await request<{ rates?: EtoroRate[] } | EtoroRate[]>(
-      null,
-      "/market-data/rates",
-      { query: { instrumentIds: instrumentIds.join(",") } },
-    );
+    interface RatesResponse {
+      rates?: EtoroRate[];
+      data?: EtoroRate[];
+    }
+    const data = await request<RatesResponse | EtoroRate[]>(env, "/market-data/instruments/rates", {
+      query: { instrumentIds: instrumentIds.join(",") },
+    });
     if (Array.isArray(data)) return data;
-    return data.rates || [];
+    return data.rates || data.data || [];
   },
 
   async getCandles(
     instrumentId: number,
-    period: "OneMinute" | "OneHour" | "OneDay" | "OneWeek" = "OneDay",
+    period: keyof typeof CANDLE_PERIOD_MAP = "OneDay",
     count = 100,
+    env: EtoroEnv = "paper",
   ): Promise<EtoroCandle[]> {
-    const data = await request<{ candles?: EtoroCandle[] } | EtoroCandle[]>(
-      null,
-      "/market-data/candles",
-      { query: { instrumentId, period, count } },
-    );
-    if (Array.isArray(data)) return data;
-    return data.candles || [];
+    const safeCount = Math.max(1, Math.min(1000, count));
+    interface CandlesResponse {
+      candles?: EtoroCandle[];
+      data?: EtoroCandle[];
+    }
+    const path = `/market-data/instruments/${instrumentId}/history/candles/desc/${CANDLE_PERIOD_MAP[period]}/${safeCount}`;
+    const data = await request<CandlesResponse | EtoroCandle[]>(env, path);
+    const candles = Array.isArray(data) ? data : (data.candles || data.data || []);
+    // eToro returns desc — we want asc (oldest → newest) for HVF analysis
+    return [...candles].reverse();
   },
 
-  // ── Trading (per-env) — guarded by agent layer, NOT directly exposed
-  // to user-facing endpoints. Always called from /lib/agent/execute.ts.
+  // ── Trading ────────────────────────────────────────────────────
   async openPositionByAmount(
     env: EtoroEnv,
     args: {
       instrumentID: number;
-      isBuy: boolean;          // false = short
-      amount: number;          // USD
+      isBuy: boolean;
+      amount: number;
       leverage?: number;
-      stopLossRate: number;    // REQUIRED by our guardrails
-      takeProfitRate: number;  // REQUIRED
+      stopLossRate: number;
+      takeProfitRate: number;
     },
   ): Promise<EtoroOpenPositionResult> {
-    return request<EtoroOpenPositionResult>(
+    // eToro spec uses PascalCase
+    const body = {
+      InstrumentID: args.instrumentID,
+      IsBuy: args.isBuy,
+      Leverage: args.leverage ?? 1,
+      Amount: args.amount,
+      StopLossRate: args.stopLossRate,
+      TakeProfitRate: args.takeProfitRate,
+    };
+    const raw = await request<Record<string, unknown>>(
       env,
-      `/trading/${envToPath(env)}/open-position-by-amount`,
-      { method: "POST", body: args },
+      `/trading/execution/${envToPath(env)}/market-open-orders/by-amount`,
+      { method: "POST", body },
     );
+    const norm = normalizePosition(raw);
+    return {
+      positionID: String(norm.positionID ?? norm.positionId ?? ""),
+      instrumentID: Number(norm.instrumentID ?? args.instrumentID),
+      units: Number(norm.units ?? 0),
+      openRate: Number(norm.openRate ?? 0),
+      isBuy: Boolean(norm.isBuy ?? args.isBuy),
+      amountInDollars: norm.amountInDollars as number | undefined,
+      stopLossRate: norm.stopLossRate as number | undefined,
+      takeProfitRate: norm.takeProfitRate as number | undefined,
+    };
   },
 
-  async closePosition(env: EtoroEnv, positionId: string): Promise<{ positionID: string }> {
-    return request<{ positionID: string }>(
+  async closePosition(
+    env: EtoroEnv,
+    positionId: string,
+    instrumentId: number,
+    unitsToDeduct?: number,
+  ): Promise<{ positionID: string }> {
+    const body: Record<string, unknown> = { InstrumentID: instrumentId };
+    if (unitsToDeduct !== undefined) body.UnitsToDeduct = unitsToDeduct;
+    const raw = await request<Record<string, unknown>>(
       env,
-      `/trading/${envToPath(env)}/close-position`,
-      { method: "POST", body: { positionID: positionId } },
+      `/trading/execution/${envToPath(env)}/market-close-orders/positions/${encodeURIComponent(positionId)}`,
+      { method: "POST", body },
     );
+    const norm = normalizePosition(raw);
+    return { positionID: String(norm.positionID ?? norm.positionId ?? positionId) };
   },
 
   async modifyPosition(
     env: EtoroEnv,
     positionId: string,
-    args: { stopLossRate?: number; takeProfitRate?: number },
+    args: { stopLossRate?: number; takeProfitRate?: number; instrumentId: number },
   ): Promise<{ positionID: string }> {
-    return request<{ positionID: string }>(
+    // Note: eToro "modify" path may differ — leaving best-guess until
+    // we hit it in production. Update to match docs if 404.
+    const body: Record<string, unknown> = { InstrumentID: args.instrumentId };
+    if (args.stopLossRate !== undefined) body.StopLossRate = args.stopLossRate;
+    if (args.takeProfitRate !== undefined) body.TakeProfitRate = args.takeProfitRate;
+    const raw = await request<Record<string, unknown>>(
       env,
-      `/trading/${envToPath(env)}/modify-position`,
-      { method: "POST", body: { positionID: positionId, ...args } },
+      `/trading/execution/${envToPath(env)}/positions/${encodeURIComponent(positionId)}/update`,
+      { method: "POST", body },
     );
+    const norm = normalizePosition(raw);
+    return { positionID: String(norm.positionID ?? positionId) };
   },
 
   // ── Connectivity check ─────────────────────────────────────────
