@@ -71,7 +71,8 @@ async function runProbe(env: "paper" | "real", probe: Probe) {
     method: probe.method,
     fullUrl: url.toString(),
     status,
-    bodyTextPreview: bodyText.slice(0, 6000),
+    bodyTextPreview: bodyText.slice(0, 14000),
+    bodyTextEnd: bodyText.length > 14000 ? bodyText.slice(-3000) : null,
     parsedKeys: parsed && typeof parsed === "object" && !Array.isArray(parsed)
       ? Object.keys(parsed as object)
       : null,
@@ -98,43 +99,51 @@ export async function GET(req: NextRequest) {
 
   const probes: Probe[] = [
     {
-      name: "portfolio_pnl",
+      name: "portfolio_pnl_full",
       method: "GET",
       path: `/trading/info/${env === "paper" ? "demo" : "real"}/pnl`,
     },
     {
-      // Try lowercase-d fields per actual response shape
-      name: "search_btc_camelCase_fields",
+      // Search BTC WITHOUT fields — returns full objects including symbolFull
+      name: "search_BTC_no_fields",
       method: "GET",
       path: "/market-data/search",
-      query: {
-        searchText: "BTC",
-        fields: "instrumentId,internalSymbolFull,instrumentDisplayName,instrumentTypeID,exchangeID,isActive,symbolFull",
-        pageSize: "10",
-      },
+      query: { searchText: "BTC", pageSize: "5" },
     },
     {
-      name: "search_btc_minimal",
+      // Search "Bitcoin" full word
+      name: "search_Bitcoin_no_fields",
       method: "GET",
       path: "/market-data/search",
-      query: {
-        searchText: "BTC",
-        fields: "instrumentId,symbolFull,instrumentDisplayName",
-        pageSize: "5",
-      },
+      query: { searchText: "Bitcoin", pageSize: "3" },
     },
     {
-      // Get rates for the candidate Bitcoin ID (100681) we saw in the search results
-      name: "rates_100681",
+      // Look up specific known instrument IDs from existing positions to map IDs -> symbols
+      // These are IDs we saw in the portfolio: 100003, 100017, 100061, 100063, 100340
+      // Also probe 100000 hoping for BTC, 100002, 100007 (likely majors)
+      name: "rates_known_ids",
       method: "GET",
       path: "/market-data/instruments/rates",
-      query: { instrumentIds: "100681" },
+      query: { instrumentIds: "100000,100001,100002,100003,100007,100017,100061,100063,100340,100008" },
     },
     {
-      // Test a candle fetch on the same ID
-      name: "candles_100681_daily_5",
+      // Try a list-all-instruments endpoint
+      name: "instruments_list_attempt",
       method: "GET",
-      path: "/market-data/instruments/100681/history/candles/desc/OneDay/5",
+      path: "/market-data/instruments",
+      query: { pageSize: "5" },
+    },
+    {
+      // Single-instrument metadata endpoint
+      name: "instrument_100000_detail",
+      method: "GET",
+      path: "/market-data/instruments/100000",
+    },
+    {
+      // Candles for instrument 100340 (which is in our portfolio — has real data)
+      name: "candles_100340_daily_5",
+      method: "GET",
+      path: "/market-data/instruments/100340/history/candles/desc/OneDay/5",
     },
   ];
 
