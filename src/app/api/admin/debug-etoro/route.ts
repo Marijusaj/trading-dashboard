@@ -17,7 +17,7 @@ const BASE_URL = "https://public-api.etoro.com/api/v1";
 
 interface Probe {
   name: string;
-  method: "GET" | "POST";
+  method: "GET" | "POST" | "DELETE" | "PUT";
   path: string;
   query?: Record<string, string>;
   body?: unknown;
