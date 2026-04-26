@@ -89,13 +89,22 @@ function timeAgo(iso: string): string {
   return `${days}d ago`;
 }
 
-function fmtPrice(n: number | null | undefined): string {
-  if (n === null || n === undefined) return "—";
+/** Coerce DB numeric (returned as string by Neon HTTP driver) to a number. */
+function num(v: unknown): number | null {
+  if (v === null || v === undefined || v === "") return null;
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function fmtPrice(v: unknown): string {
+  const n = num(v);
+  if (n === null) return "—";
   return n < 1 ? n.toFixed(4) : n.toLocaleString("en-US", { maximumFractionDigits: 2 });
 }
 
-function fmtUsd(n: number | null | undefined, sign = false): string {
-  if (n === null || n === undefined) return "—";
+function fmtUsd(v: unknown, sign = false): string {
+  const n = num(v);
+  if (n === null) return "—";
   const s = sign && n > 0 ? "+" : "";
   return n < 0 ? `-$${Math.abs(n).toFixed(2)}` : `${s}$${n.toFixed(2)}`;
 }
@@ -224,7 +233,9 @@ export default function AgentActivity() {
                   <span className={`text-[10px] uppercase ${d.environment === "real" ? "text-orange-400" : "text-blue-400"}`}>{d.environment}</span>
                   <span className="text-gray-400 uppercase text-[10px]">{d.decision_type}</span>
                   {d.asset && <span className="text-amber-400 font-bold">{d.asset}</span>}
-                  {d.hvf_score !== null && <span className="text-gray-500">HVF {Number(d.hvf_score).toFixed(0)}</span>}
+                  {d.hvf_score !== null && d.hvf_score !== undefined && (
+                    <span className="text-gray-500">HVF {(num(d.hvf_score) ?? 0).toFixed(0)}</span>
+                  )}
                   <span className={`ml-auto text-[10px] ${STATUS_COLOR[d.outcome_status] || "text-gray-500"}`}>
                     {d.outcome_status}{d.guardrail_violation ? ` (${d.guardrail_violation})` : ""}
                   </span>
@@ -251,7 +262,9 @@ export default function AgentActivity() {
                 <span className={`col-span-2 text-right ${t.pnl_usd && t.pnl_usd >= 0 ? "text-green-400" : "text-red-400"}`}>
                   {fmtUsd(t.pnl_usd, true)}
                 </span>
-                <span className="col-span-1 text-gray-500 text-right">{t.r_multiple ? `${t.r_multiple.toFixed(1)}R` : "—"}</span>
+                <span className="col-span-1 text-gray-500 text-right">{
+                  num(t.r_multiple) !== null ? `${num(t.r_multiple)!.toFixed(1)}R` : "—"
+                }</span>
                 <span className="col-span-2 text-gray-600 text-right text-[10px]">{t.exit_reason || ""}</span>
               </div>
             ))}

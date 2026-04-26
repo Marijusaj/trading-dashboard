@@ -13,8 +13,14 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "CryptoSniper Dashboard — BTC/TRX Trading",
-  description: "Trading dashboard tracking Francis Hunt thesis: BTC targets, TRX outperformance, dollar debasement",
+  title: "⚡ CryptoSniper",
+  description: "FrancisAgent autonomous HVF trading on eToro · live BTC/TRX/Gold thesis tracking",
+  icons: {
+    icon: [
+      { url: "/icon.svg", type: "image/svg+xml" },
+      { url: "/favicon.ico", sizes: "256x256" },
+    ],
+  },
 };
 
 export default function RootLayout({
