@@ -206,6 +206,23 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // Skip silently if Phase 2 isn't configured
+  if (!(process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL) ||
+      !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return NextResponse.json({
+      ok: true,
+      skipped: true,
+      reason: "Supabase not configured — analyst-watch is disabled.",
+    });
+  }
+  if (!process.env.YOUTUBE_API_KEY) {
+    return NextResponse.json({
+      ok: true,
+      skipped: true,
+      reason: "YOUTUBE_API_KEY not set — cannot fetch videos.",
+    });
+  }
+
   try {
     const supabase = serviceClient();
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });

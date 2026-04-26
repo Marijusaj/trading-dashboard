@@ -181,6 +181,7 @@ export default function AnalystWatch() {
   const [analysts, setAnalysts] = useState<AnalystData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -190,7 +191,10 @@ export default function AnalystWatch() {
         const json = await res.json();
         if (cancelled) return;
         if (json.error) setError(json.error);
-        else setAnalysts(json.analysts || []);
+        else {
+          setAnalysts(json.analysts || []);
+          setNotice(json.notice || null);
+        }
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load");
       } finally {
@@ -237,11 +241,23 @@ export default function AnalystWatch() {
           <div className="text-gray-600 text-[10px]">{analysts.length} analysts</div>
         </div>
       </div>
-      <div className="p-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-        {analysts.map((a) => (
-          <AnalystCard key={a.id} analyst={a} />
-        ))}
-      </div>
+      {notice && analysts.length === 0 && (
+        <div className="p-3 text-xs text-amber-400 bg-amber-950/20 border-b border-amber-900/30">
+          {notice}
+        </div>
+      )}
+      {!notice && analysts.length === 0 && (
+        <div className="p-6 text-center text-gray-500 text-sm">
+          No analyst data yet. Cron will populate.
+        </div>
+      )}
+      {analysts.length > 0 && (
+        <div className="p-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+          {analysts.map((a) => (
+            <AnalystCard key={a.id} analyst={a} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

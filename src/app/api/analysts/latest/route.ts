@@ -4,7 +4,24 @@ import { serviceClient } from "@/lib/supabase";
 export const dynamic = "force-dynamic";
 export const revalidate = 300; // 5 min cache on edge
 
+/** True if Supabase env vars look configured. */
+function supabaseConfigured(): boolean {
+  return !!(
+    (process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL) &&
+    process.env.SUPABASE_SERVICE_ROLE_KEY
+  );
+}
+
 export async function GET() {
+  // Graceful empty when Phase 2 (analyst-watch) isn't wired up yet.
+  // Returning 500 was breaking the dashboard render.
+  if (!supabaseConfigured()) {
+    return NextResponse.json({
+      analysts: [],
+      timestamp: new Date().toISOString(),
+      notice: "Supabase not configured — analyst-watch is disabled. Add NEXT_PUBLIC_SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY in Vercel env vars to enable.",
+    });
+  }
   try {
     const supabase = serviceClient();
 
