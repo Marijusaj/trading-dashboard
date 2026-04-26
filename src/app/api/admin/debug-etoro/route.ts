@@ -90,6 +90,8 @@ export async function GET(req: NextRequest) {
 
   const env = (req.nextUrl.searchParams.get("env") as "paper" | "real") || "paper";
   const testOpen = req.nextUrl.searchParams.get("testOpen") === "1";
+  const cancelOrderIds = req.nextUrl.searchParams.get("cancelOrders");
+  const lookupOrderIds = req.nextUrl.searchParams.get("lookupOrders");
 
   // Surface env-var presence (just lengths — never the actual keys)
   const envState = {
@@ -190,6 +192,28 @@ export async function GET(req: NextRequest) {
         method: "GET",
         path: "/market-data/instruments/rates",
         query: { instrumentIds: "18" },
+      });
+    }
+  }
+
+  // Optional: cancel pending orders (comma-separated IDs)
+  if (cancelOrderIds) {
+    for (const oid of cancelOrderIds.split(",").map((s) => s.trim()).filter(Boolean)) {
+      probes.push({
+        name: `cancel_order_${oid}`,
+        method: "DELETE",
+        path: `/trading/execution/${env === "paper" ? "demo" : "real"}/market-open-orders/${oid}`,
+      });
+    }
+  }
+
+  // Optional: look up order info (comma-separated IDs)
+  if (lookupOrderIds) {
+    for (const oid of lookupOrderIds.split(",").map((s) => s.trim()).filter(Boolean)) {
+      probes.push({
+        name: `lookup_order_${oid}`,
+        method: "GET",
+        path: `/trading/info/${env === "paper" ? "demo" : "real"}/orders/${oid}`,
       });
     }
   }
