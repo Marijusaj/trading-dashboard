@@ -9,6 +9,8 @@ import PositionTracker from "./PositionTracker";
 import SignalPanel from "./SignalPanel";
 import ThesisHealth from "./ThesisHealth";
 import AnalystWatch from "./AnalystWatch";
+import EtoroPositions from "./EtoroPositions";
+import AgentActivity from "./AgentActivity";
 import { BTC_LEVELS, TRX_LEVELS } from "@/lib/levels";
 import { POSITIONS } from "@/lib/positions";
 
@@ -198,6 +200,12 @@ export default function Dashboard() {
 
           {/* Analyst Watch — latest videos from Francis Hunt + Benjamin Cowen */}
           <AnalystWatch />
+
+          {/* eToro Portfolio — Real (live capital) + Paper (agent sandbox) */}
+          <EtoroPositions />
+
+          {/* FrancisAgent — autonomous trader running every 4h */}
+          <AgentActivity />
 
           {/* Trade Thesis Summary */}
           <div className="bg-[#111] border border-gray-800 rounded-lg p-4">
