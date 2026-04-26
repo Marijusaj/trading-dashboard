@@ -71,7 +71,7 @@ async function runProbe(env: "paper" | "real", probe: Probe) {
     method: probe.method,
     fullUrl: url.toString(),
     status,
-    bodyTextPreview: bodyText.slice(0, 1500),
+    bodyTextPreview: bodyText.slice(0, 6000),
     parsedKeys: parsed && typeof parsed === "object" && !Array.isArray(parsed)
       ? Object.keys(parsed as object)
       : null,
@@ -103,30 +103,38 @@ export async function GET(req: NextRequest) {
       path: `/trading/info/${env === "paper" ? "demo" : "real"}/pnl`,
     },
     {
-      name: "search_btc",
+      // Try lowercase-d fields per actual response shape
+      name: "search_btc_camelCase_fields",
       method: "GET",
       path: "/market-data/search",
       query: {
         searchText: "BTC",
-        fields: "instrumentID,internalSymbolFull,instrumentDisplayName,instrumentTypeID,exchangeID,isActive",
+        fields: "instrumentId,internalSymbolFull,instrumentDisplayName,instrumentTypeID,exchangeID,isActive,symbolFull",
         pageSize: "10",
       },
     },
     {
-      name: "search_bitcoin_word",
+      name: "search_btc_minimal",
       method: "GET",
       path: "/market-data/search",
       query: {
-        searchText: "Bitcoin",
-        fields: "instrumentID,internalSymbolFull,instrumentDisplayName",
-        pageSize: "10",
+        searchText: "BTC",
+        fields: "instrumentId,symbolFull,instrumentDisplayName",
+        pageSize: "5",
       },
     },
     {
-      name: "search_no_fields",
+      // Get rates for the candidate Bitcoin ID (100681) we saw in the search results
+      name: "rates_100681",
       method: "GET",
-      path: "/market-data/search",
-      query: { searchText: "BTC", pageSize: "5" },
+      path: "/market-data/instruments/rates",
+      query: { instrumentIds: "100681" },
+    },
+    {
+      // Test a candle fetch on the same ID
+      name: "candles_100681_daily_5",
+      method: "GET",
+      path: "/market-data/instruments/100681/history/candles/desc/OneDay/5",
     },
   ];
 
