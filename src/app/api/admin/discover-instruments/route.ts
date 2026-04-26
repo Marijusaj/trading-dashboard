@@ -13,7 +13,7 @@ import { etoro, type InstrumentMeta } from "@/lib/etoro/client";
 import { UNIVERSE } from "@/lib/agent/universe";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 120;
+export const maxDuration = 300;
 
 // eToro instrumentTypeID → our asset_class label
 function classifyInstrument(typeId: number): string {
@@ -74,61 +74,59 @@ export async function POST(req: NextRequest) {
   try {
     const sql = db();
 
-    // 1. Pull every tradeable instrument
-    const all = await etoro.listInstruments("paper", 1000);
+    // Pull just enough of eToro's instrument catalog to find our 15 symbols.
+    // listInstruments uses parallel pagination + stopWhen for an early bail.
+    const matches: Record<string, { instrumentID: number; symbolFull: string; displayName: string } | null> = {};
+    const wanted = new Set(UNIVERSE.map((u) => u.symbol));
 
-    // 2. Cache ALL of them in `instruments` (by id) — useful for later
-    //    universe expansion. Cap inserts to avoid huge writes; only
-    //    materialize rows for crypto / commodity / equity / etf / index.
-    let totalCached = 0;
-    for (const meta of all) {
-      const cls = classifyInstrument(meta.instrumentTypeID);
-      if (cls === "fx" || cls === "other") continue;
-      try {
-        await sql`
-          INSERT INTO instruments (instrument_id, symbol, name, asset_class, metadata)
-          VALUES (
-            ${meta.instrumentID},
-            ${meta.symbolFull || ""},
-            ${meta.instrumentDisplayName || ""},
-            ${cls},
-            ${JSON.stringify(meta)}::jsonb
-          )
-          ON CONFLICT (instrument_id) DO UPDATE
-            SET symbol       = EXCLUDED.symbol,
-                name         = EXCLUDED.name,
-                asset_class  = EXCLUDED.asset_class,
-                metadata     = EXCLUDED.metadata,
-                refreshed_at = now()
-        `;
-        totalCached++;
-      } catch (e) {
-        console.warn("instrument cache insert failed", meta.instrumentID, e);
+    const instruments = await etoro.listInstruments("paper", 500, (items) => {
+      // Update matches incrementally; stop when all universe symbols found
+      for (const u of UNIVERSE) {
+        if (matches[u.symbol]) continue;
+        const found = items.find((m) => matchesUniverse(m, u.symbol));
+        if (found) {
+          matches[u.symbol] = {
+            instrumentID: found.instrumentID,
+            symbolFull: found.symbolFull,
+            displayName: found.instrumentDisplayName,
+          };
+          wanted.delete(u.symbol);
+        }
       }
+      return wanted.size === 0;
+    });
+    const totalSeen = instruments.length;
+
+    // Mark unmatched
+    for (const u of UNIVERSE) {
+      if (!(u.symbol in matches)) matches[u.symbol] = null;
     }
 
-    // 3. Find best match per universe symbol and write universe-keyed
-    //    cache rows so scanner's `WHERE symbol = 'BTC'` lookup works.
-    const matches: Record<string, { instrumentID: number; symbolFull: string; displayName: string } | null> = {};
-    for (const u of UNIVERSE) {
-      const found = all.find((m) => matchesUniverse(m, u.symbol));
-      if (found) {
-        matches[u.symbol] = {
-          instrumentID: found.instrumentID,
-          symbolFull: found.symbolFull,
-          displayName: found.instrumentDisplayName,
+    // Bulk-write the universe matches in a SINGLE multi-row INSERT
+    const rows = Object.entries(matches)
+      .filter(([, v]) => v !== null)
+      .map(([sym, v]) => {
+        const u = UNIVERSE.find((x) => x.symbol === sym)!;
+        return {
+          id: v!.instrumentID,
+          symbol: sym,
+          name: v!.displayName || u.display,
+          asset_class: u.assetClass,
+          metadata: JSON.stringify({ ...v, universeAlias: sym }),
         };
-        // Upsert with universe symbol as the key so scanner finds it
+      });
+
+    let upserted = 0;
+    if (rows.length > 0) {
+      // Build a values clause with placeholders for a single bulk insert.
+      // Neon HTTP supports parameterized .query() — we'll use individual
+      // upserts but limited to ~15 rows so total time is small (15 round
+      // trips at ~50ms = ~750ms — well within budget).
+      for (const r of rows) {
         try {
           await sql`
             INSERT INTO instruments (instrument_id, symbol, name, asset_class, metadata)
-            VALUES (
-              ${found.instrumentID},
-              ${u.symbol},
-              ${found.instrumentDisplayName || u.display},
-              ${u.assetClass},
-              ${JSON.stringify({ ...found, universeAlias: u.symbol })}::jsonb
-            )
+            VALUES (${r.id}, ${r.symbol}, ${r.name}, ${r.asset_class}, ${r.metadata}::jsonb)
             ON CONFLICT (instrument_id) DO UPDATE
               SET symbol       = EXCLUDED.symbol,
                   name         = EXCLUDED.name,
@@ -136,19 +134,20 @@ export async function POST(req: NextRequest) {
                   metadata     = EXCLUDED.metadata,
                   refreshed_at = now()
           `;
+          upserted++;
         } catch (e) {
-          console.warn("universe upsert failed", u.symbol, e);
+          console.warn("universe upsert failed", r.symbol, e);
         }
-      } else {
-        matches[u.symbol] = null;
       }
     }
 
     return NextResponse.json({
       ok: true,
       timestamp: new Date().toISOString(),
-      totalInstrumentsFromEtoro: all.length,
-      totalCachedInDb: totalCached,
+      totalInstrumentsFromEtoro: totalSeen,
+      universeMatched: rows.length,
+      universeMissing: UNIVERSE.length - rows.length,
+      upserted,
       universeMatches: matches,
     });
   } catch (e) {

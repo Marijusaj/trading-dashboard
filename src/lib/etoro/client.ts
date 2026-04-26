@@ -282,22 +282,53 @@ export const etoro = {
 
   /**
    * GET /market-data/instruments — proper instrument discovery.
-   * Paginated; we walk all pages once and return the merged list.
+   *
+   * eToro has ~11k instruments. Sequential pagination is slow.
+   * Strategy: fetch page 1 to learn `totalItems`, then dispatch the
+   * remaining pages in parallel (limited concurrency).
+   *
+   * If `stopWhen` is provided and returns true mid-batch, we still
+   * await the in-flight requests but skip remaining pages. Useful
+   * when callers only need a few instruments.
    */
-  async listInstruments(env: EtoroEnv = "paper", pageSize = 1000): Promise<InstrumentMeta[]> {
-    const all: InstrumentMeta[] = [];
-    let page = 1;
-    // Hard cap: don't paginate forever.
-    while (page <= 50) {
-      const data = await request<InstrumentsListResponse>(env, "/market-data/instruments", {
-        query: { pageSize, pageNumber: page },
-      });
-      const batch = data.instrumentDisplayDatas || [];
-      if (batch.length === 0) break;
-      all.push(...batch);
-      if (batch.length < pageSize) break;
-      page++;
+  async listInstruments(
+    env: EtoroEnv = "paper",
+    pageSize = 500,
+    stopWhen?: (items: InstrumentMeta[]) => boolean,
+  ): Promise<InstrumentMeta[]> {
+    const first = await request<InstrumentsListResponse>(env, "/market-data/instruments", {
+      query: { pageSize, pageNumber: 1 },
+    });
+    const all = (first.instrumentDisplayDatas || []).slice();
+
+    if (stopWhen && stopWhen(all)) return all;
+
+    const total = first.totalItems ?? first.total ?? all.length;
+    const pages = Math.min(50, Math.ceil(total / pageSize));
+    if (pages <= 1) return all;
+
+    const concurrency = 6;
+    let nextPage = 2;
+    let stopped = false;
+
+    async function worker() {
+      while (!stopped) {
+        const p = nextPage++;
+        if (p > pages) return;
+        try {
+          const data = await request<InstrumentsListResponse>(env, "/market-data/instruments", {
+            query: { pageSize, pageNumber: p },
+          });
+          const batch = data.instrumentDisplayDatas || [];
+          all.push(...batch);
+          if (stopWhen && stopWhen(all)) stopped = true;
+        } catch (e) {
+          console.warn("listInstruments page failed", p, e);
+        }
+      }
     }
+
+    await Promise.all(Array.from({ length: concurrency }, () => worker()));
     return all;
   },
 
