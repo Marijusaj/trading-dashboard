@@ -127,11 +127,18 @@ export async function GET(req: NextRequest) {
       query: { instrumentIds: "100000,100001,100002,100003,100007,100017,100061,100063,100340,100008" },
     },
     {
-      // Try a list-all-instruments endpoint
-      name: "instruments_list_attempt",
+      // Try big pageSize to learn total count
+      name: "instruments_list_max",
       method: "GET",
       path: "/market-data/instruments",
-      query: { pageSize: "5" },
+      query: { pageSize: "1000" },
+    },
+    {
+      // Single ID rates
+      name: "rates_single_100340",
+      method: "GET",
+      path: "/market-data/instruments/rates",
+      query: { instrumentIds: "100340" },
     },
     {
       // Single-instrument metadata endpoint
