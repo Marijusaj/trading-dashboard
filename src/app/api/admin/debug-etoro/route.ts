@@ -89,6 +89,7 @@ export async function GET(req: NextRequest) {
   }
 
   const env = (req.nextUrl.searchParams.get("env") as "paper" | "real") || "paper";
+  const testOpen = req.nextUrl.searchParams.get("testOpen") === "1";
 
   // Surface env-var presence (just lengths — never the actual keys)
   const envState = {
@@ -153,6 +154,45 @@ export async function GET(req: NextRequest) {
       path: "/market-data/instruments/100340/history/candles/desc/OneDay/5",
     },
   ];
+
+  // Optional: also do a $10 open-position test to capture eToro's raw response
+  if (testOpen) {
+    // Get GOLD's current rate so we can compute valid SL/TP
+    const ratesProbe = await runProbe(env, {
+      name: "_pre_test_rates",
+      method: "GET",
+      path: "/market-data/instruments/rates",
+      query: { instrumentIds: "18" },
+    });
+    let entry = 0;
+    try {
+      const rj = JSON.parse(ratesProbe.bodyTextPreview) as { rates?: { ask: number; bid: number }[] };
+      if (rj.rates?.[0]) entry = (rj.rates[0].ask + rj.rates[0].bid) / 2;
+    } catch {}
+    if (entry > 0) {
+      // SHORT — SL above entry, TP below
+      probes.push({
+        name: "test_open_gold_short_10usd",
+        method: "POST",
+        path: `/trading/execution/${env === "paper" ? "demo" : "real"}/market-open-orders/by-amount`,
+        body: {
+          InstrumentID: 18,
+          IsBuy: false,
+          Leverage: 1,
+          Amount: 10,
+          StopLossRate: Number((entry * 1.03).toFixed(4)),
+          TakeProfitRate: Number((entry * 0.95).toFixed(4)),
+        },
+      });
+    } else {
+      probes.push({
+        name: "test_open_skipped_no_entry",
+        method: "GET",
+        path: "/market-data/instruments/rates",
+        query: { instrumentIds: "18" },
+      });
+    }
+  }
 
   const results = [];
   for (const p of probes) {
