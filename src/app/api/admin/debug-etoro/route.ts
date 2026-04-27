@@ -93,6 +93,23 @@ export async function GET(req: NextRequest) {
   const cancelOrderIds = req.nextUrl.searchParams.get("cancelOrders");
   const lookupOrderIds = req.nextUrl.searchParams.get("lookupOrders");
   const abandonTradeId = req.nextUrl.searchParams.get("abandonTrade");
+  const listTradesLimit = req.nextUrl.searchParams.get("listTrades");
+
+  // Dump latest N trades from DB regardless of status
+  if (listTradesLimit) {
+    const n = Math.max(1, Math.min(100, parseInt(listTradesLimit, 10) || 20));
+    const { db } = await import("@/lib/neon");
+    const sql = db();
+    const rows = await sql`
+      SELECT id, environment, asset, side, status, entry_price, size_usd,
+             stop_loss, take_profit, etoro_order_id, etoro_position_id,
+             opened_at, closed_at, exit_reason, reconciled_at
+        FROM trades
+       ORDER BY opened_at DESC
+       LIMIT ${n}
+    `;
+    return NextResponse.json({ ok: true, trades: rows });
+  }
 
   // One-off DB action: mark a stale agent trade as abandoned and
   // decrement open_position_count. Use when reconciler can't yet
