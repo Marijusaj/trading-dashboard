@@ -115,7 +115,7 @@ export const TOOL_DEFS: Anthropic.Tool[] = [
   },
   {
     name: "close_position",
-    description: "Close an open trade by trade_id (returned by get_open_positions).",
+    description: "Close an open trade FULLY by trade_id (returned by get_open_positions).",
     input_schema: {
       type: "object",
       properties: {
@@ -124,6 +124,33 @@ export const TOOL_DEFS: Anthropic.Tool[] = [
         reasoning: { type: "string" },
       },
       required: ["tradeId", "reason", "reasoning"],
+    },
+  },
+  {
+    name: "close_position_partial",
+    description:
+      "Close PART of an open trade. fraction=0.5 closes half, leaves the other half running. " +
+      "Use this at +1R MFE to lock in a partial win while letting winners run.",
+    input_schema: {
+      type: "object",
+      properties: {
+        tradeId: { type: "string" },
+        fraction: { type: "number", description: "0.1-0.9 — fraction of position to close" },
+        reasoning: { type: "string" },
+      },
+      required: ["tradeId", "fraction", "reasoning"],
+    },
+  },
+  {
+    name: "get_position_status",
+    description:
+      "Quantitative status of all open agent trades for this env: live price, unrealized PnL$, " +
+      "PnL% on margin, R-multiple (MFE/MAE in units of risk), age in hours, distance to SL/TP. " +
+      "Call BEFORE deciding whether to hold/close/partial-close.",
+    input_schema: {
+      type: "object",
+      properties: {},
+      required: [],
     },
   },
   {
@@ -347,6 +374,97 @@ export async function handleToolCall(
         reasoning: input.reasoning,
       });
       return result;
+    }
+
+    case "close_position_partial": {
+      const fraction = Math.max(0.1, Math.min(0.9, Number(input.fraction)));
+      const sql = db();
+      const rows = (await sql`
+        SELECT id, etoro_position_id, instrument_id, units, environment, asset
+          FROM trades
+         WHERE id = ${input.tradeId} AND status = 'open'
+      `) as unknown as Array<{ id: string; etoro_position_id: string; instrument_id: number; units: string | number; environment: typeof ctx.environment; asset: string }>;
+      if (rows.length === 0) return { error: "Trade not found or not open" };
+      const t = rows[0];
+      if (!t.etoro_position_id) return { error: "Trade has no eToro position ID — pending order" };
+      const totalUnits = Number(t.units);
+      if (!totalUnits || totalUnits <= 0) return { error: "Trade has unknown unit count, cannot partial close" };
+      const unitsToClose = Number((totalUnits * fraction).toFixed(6));
+      try {
+        await etoro.closePosition(ctx.environment, t.etoro_position_id, Number(t.instrument_id), unitsToClose);
+        // Update DB units to reflect remaining
+        const remaining = totalUnits - unitsToClose;
+        await sql`
+          UPDATE trades
+             SET units = ${remaining},
+                 reconciled_at = now()
+           WHERE id = ${t.id}
+        `;
+        // Log a 'modify' decision
+        await sql`
+          INSERT INTO agent_decisions (
+            environment, agent_kind, decision_type, asset, reasoning, outcome_status, trade_id
+          ) VALUES (
+            ${ctx.environment}, ${ctx.overrides?.agentKind || 'strategic'},
+            'modify', ${t.asset},
+            ${`PARTIAL CLOSE ${(fraction * 100).toFixed(0)}% (${unitsToClose} units, ${remaining} remaining): ${input.reasoning}`},
+            'executed', ${t.id}
+          )
+        `;
+        return { ok: true, closed_units: unitsToClose, remaining_units: remaining, fraction };
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : String(e) };
+      }
+    }
+
+    case "get_position_status": {
+      const sql = db();
+      const trades = (await sql`
+        SELECT id, asset, instrument_id, side, entry_price, size_usd,
+               stop_loss, take_profit, leverage, opened_at, etoro_position_id
+          FROM trades
+         WHERE environment = ${ctx.environment} AND status = 'open'
+           AND etoro_position_id IS NOT NULL AND etoro_position_id <> ''
+         ORDER BY opened_at DESC
+      `) as unknown as Array<{ id: string; asset: string; instrument_id: number; side: "long" | "short"; entry_price: string | number; size_usd: string | number; stop_loss: string | number; take_profit: string | number; leverage: string | number; opened_at: string; etoro_position_id: string }>;
+      if (trades.length === 0) return [];
+
+      const ids = [...new Set(trades.map((t) => Number(t.instrument_id)))];
+      const rates = await etoro.getRates(ids, ctx.environment);
+      const rateMap = new Map(rates.map((r) => [r.instrumentID, (r.bid + r.ask) / 2]));
+
+      return trades.map((t) => {
+        const entry = Number(t.entry_price);
+        const sl = Number(t.stop_loss);
+        const tp = Number(t.take_profit);
+        const size = Number(t.size_usd);
+        const lev = Number(t.leverage) || 1;
+        const mid = rateMap.get(Number(t.instrument_id)) ?? null;
+        const dirMul = t.side === "long" ? 1 : -1;
+        const pctMove = mid !== null ? ((mid - entry) / entry) * dirMul : null;
+        const pnlUsd = pctMove !== null ? size * pctMove * lev : null;
+        const riskPerUnit = Math.abs(entry - sl);
+        const rMultiple = pctMove !== null && riskPerUnit > 0
+          ? (Math.abs(mid! - entry) * (pctMove >= 0 ? 1 : -1)) / riskPerUnit
+          : null;
+        const ageHours = (Date.now() - new Date(t.opened_at).getTime()) / 3_600_000;
+        return {
+          tradeId: t.id,
+          asset: t.asset,
+          side: t.side,
+          entry,
+          currentPrice: mid,
+          stopLoss: sl,
+          takeProfit: tp,
+          sizeUsd: size,
+          ageHours: Number(ageHours.toFixed(1)),
+          unrealizedPnLUsd: pnlUsd !== null ? Number(pnlUsd.toFixed(2)) : null,
+          unrealizedPnLPct: pctMove !== null ? Number((pctMove * 100).toFixed(2)) : null,
+          rMultiple: rMultiple !== null ? Number(rMultiple.toFixed(2)) : null,
+          distToSlPct: mid !== null ? Number((((sl - mid) / mid) * 100 * dirMul * -1).toFixed(2)) : null,
+          distToTpPct: mid !== null ? Number((((tp - mid) / mid) * 100 * dirMul).toFixed(2)) : null,
+        };
+      });
     }
 
     case "save_memory": {

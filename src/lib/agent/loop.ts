@@ -5,6 +5,7 @@ import { SYSTEM_PROMPT } from "./prompt";
 import { TOOL_DEFS, handleToolCall, type AgentToolContext } from "./tools";
 import { isKillswitchActive } from "./guardrails";
 import { reconcileEnv } from "./reconcile";
+import { autoManageOpenPositions } from "./manage";
 import type { AgentEnvironment } from "@/lib/neon";
 
 const MODEL = "claude-opus-4-7";              // Smartest model, 1M ctx
@@ -59,13 +60,31 @@ export async function runAgent(env: AgentEnvironment): Promise<AgentRunSummary> 
     reconcileNote = `\n\nReconcile failed: ${e instanceof Error ? e.message : String(e)}\n`;
   }
 
+  // ── Auto-manage open positions: signal degradation, time stops ──────
+  let manageNote = "";
+  try {
+    const m = await autoManageOpenPositions(env, "strategic");
+    if (m.closed.length > 0) {
+      manageNote = `\n\nAuto-management report (CLOSED ${m.closed.length} position(s) before this scan):\n` +
+        m.closed.map((c) => `  - ${c.asset}: ${c.reason}`).join("\n");
+    } else if (m.held.length > 0) {
+      manageNote = `\n\nAuto-management: ${m.held.length} open position(s) re-checked, all still aligned.`;
+    }
+    if (m.errors.length > 0) manageNote += `\nManagement errors: ${m.errors.join("; ")}`;
+  } catch (e) {
+    manageNote = `\n\nAuto-management failed: ${e instanceof Error ? e.message : String(e)}`;
+  }
+
   const now = new Date();
   const initialUser = `Scan time: ${now.toISOString()}
 Environment: ${env.toUpperCase()} ${env === "real" ? "(LIVE CAPITAL — be conservative)" : "(PAPER — be active and learn)"}
-${reconcileNote}
-Run your scan + decision loop now. Start by calling scan_universe and get_open_positions in parallel, then reason about what to do.
+${reconcileNote}${manageNote}
+Run your scan + decision loop now. Start by calling scan_universe, get_open_positions, and get_position_status in parallel, then reason about what to do.
 
-Important: scan results include marketIsOpen for each instrument. Do NOT attempt to open trades on markets where marketIsOpen=false (commodity CFDs are closed weekends; equities/ETFs only during NYSE hours). The guardrail will reject them anyway, but you should skip them in reasoning.`;
+Important:
+- scan results include marketIsOpen for each instrument. Do NOT attempt to open trades on markets where marketIsOpen=false (commodity CFDs are closed weekends; equities/ETFs only during NYSE hours).
+- get_position_status gives quantitative PnL/R-multiple for ANY open positions — use this to decide hold/close/partial-close. At +1R MFE consider close_position_partial(0.5) to lock in half. At -0.5R consider whether thesis still valid.
+- The auto-manager already closed any positions where the HVF signal flipped. So existing open positions still have a valid signal at scan time.`;
 
   const messages: Anthropic.MessageParam[] = [{ role: "user", content: initialUser }];
 

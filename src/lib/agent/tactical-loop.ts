@@ -5,6 +5,7 @@ import { TACTICAL_UNIVERSE, TACTICAL_LIMITS } from "./tactical-universe";
 import { TOOL_DEFS, handleToolCall, type AgentToolContext } from "./tools";
 import { isKillswitchActive } from "./guardrails";
 import { reconcileEnv } from "./reconcile";
+import { autoManageOpenPositions } from "./manage";
 import type { AgentEnvironment } from "@/lib/neon";
 
 const TACTICAL_MODEL = "claude-haiku-4-5";   // Cheap + fast for pattern matching
@@ -55,7 +56,7 @@ export async function runTacticalAgent(env: AgentEnvironment): Promise<TacticalR
     },
   };
 
-  // ── Reconcile first ──
+  // ── Reconcile + auto-manage existing positions before reasoning ──
   let reconcileNote = "";
   try {
     const r = await reconcileEnv(env);
@@ -70,13 +71,34 @@ export async function runTacticalAgent(env: AgentEnvironment): Promise<TacticalR
     reconcileNote = `\nReconcile failed: ${e instanceof Error ? e.message : String(e)}\n`;
   }
 
+  let manageNote = "";
+  try {
+    const m = await autoManageOpenPositions(env, "tactical");
+    if (m.closed.length > 0) {
+      manageNote = `\nAuto-managed: closed ${m.closed.length} stale tactical position(s) — ` +
+        m.closed.map((c) => `${c.asset}: ${c.reason}`).join(" | ") + "\n";
+    }
+    if (m.errors.length > 0) manageNote += `Manage errors: ${m.errors.join("; ")}\n`;
+  } catch (e) {
+    manageNote = `\nAuto-management failed: ${e instanceof Error ? e.message : String(e)}\n`;
+  }
+
   const now = new Date();
   const initialUser = `Scan time: ${now.toISOString()}
 Environment: ${env.toUpperCase()} (TACTICAL — 15m crypto scalps)
-Tactical universe: SOL, AVAX, DOGE, BNB, LINK
+Tactical universe: SOL, AVAX (long-only), DOGE, BNB, LINK
 Max position: $${TACTICAL_LIMITS[env].maxPositionSizeUsd}
-${reconcileNote}
-Run a quick 15m HVF scan and decide. Most scans → HOLD. Only act on HVF ≥ 70.`;
+${reconcileNote}${manageNote}
+Workflow:
+1. get_position_status — quantitative PnL on ANY open tactical trades
+2. For each open trade: at +1R consider close_position_partial(0.5); at -0.5R reassess thesis
+3. scan_universe (15m HVF on 5 cryptos)
+4. Most scans → HOLD. Only open new on HVF ≥ 70.
+
+Constraints:
+- Crypto SHORTS need SL ≥ 5% from entry (eToro min). Tight stops get widened, destroying R:R.
+- AVAX shorts disallowed (errorCode 747). Long entries OK.
+- Auto-manager already closed any positions with degraded HVF.`;
 
   const messages: Anthropic.MessageParam[] = [{ role: "user", content: initialUser }];
 
