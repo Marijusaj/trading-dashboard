@@ -105,14 +105,15 @@ export async function GET(req: NextRequest) {
     const { db } = await import("@/lib/neon");
     const { sanitizeReasoning } = await import("@/lib/agent/execute");
     const sql = db();
+    // Postgres POSIX regex doesn't support \b, use LIKE
     const dirtyDecisions = (await sql`
       SELECT id, reasoning FROM agent_decisions
-       WHERE reasoning ~ '<parameter\\b' OR reasoning ~ '\\\\",\\s*\\n'
+       WHERE reasoning LIKE '%<parameter%' OR reasoning LIKE '%</parameter%'
        ORDER BY ts DESC LIMIT 200
     `) as unknown as { id: string; reasoning: string }[];
     const dirtyMemory = (await sql`
       SELECT id, content FROM agent_memory
-       WHERE content ~ '<parameter\\b' OR content ~ '\\\\",\\s*\\n'
+       WHERE content LIKE '%<parameter%' OR content LIKE '%</parameter%'
        ORDER BY ts DESC LIMIT 200
     `) as unknown as { id: string; content: string }[];
 
