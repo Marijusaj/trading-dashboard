@@ -3,15 +3,24 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { db } from "@/lib/neon";
 import { etoro } from "@/lib/etoro/client";
-import { scanUniverse, type ScanCandidate } from "./scanner";
+import { scanUniverse, type ScanCandidate, type ScanOptions } from "./scanner";
 import { planRisk, analyzeHVF, type OHLC } from "./hvf";
-import { openTrade, closeTrade, recordObservationDecision, type OpenTradeRequest } from "./execute";
+import { openTrade, closeTrade, recordObservationDecision, type OpenTradeRequest, type AgentKind } from "./execute";
+import type { UniverseEntry } from "./universe";
 import type { AgentEnvironment } from "@/lib/neon";
 
 export interface AgentToolContext {
   environment: AgentEnvironment;
   // Cache of universe scan results for this run
   scanCache: ScanCandidate[] | null;
+  /** Optional overrides — set by tactical agent to inject its universe etc. */
+  overrides?: {
+    universe?: UniverseEntry[];
+    timeframe?: ScanOptions["timeframe"];
+    agentKind?: AgentKind;
+    /** Cap the position size the agent can request (tactical: $25 Real / $1000 Paper) */
+    maxPositionSizeUsd?: number;
+  };
 }
 
 // ── Tool schemas (sent to Claude) ───────────────────────────────────
@@ -158,7 +167,10 @@ export async function handleToolCall(
 ): Promise<unknown> {
   switch (toolName) {
     case "scan_universe": {
-      const results = await scanUniverse();
+      const results = await scanUniverse({
+        universe: ctx.overrides?.universe,
+        timeframe: ctx.overrides?.timeframe,
+      });
       ctx.scanCache = results;
       return results.map((c) => ({
         symbol: c.symbol,
@@ -294,15 +306,24 @@ export async function handleToolCall(
       if (!cand) {
         return { error: `Symbol ${input.symbol} not in latest scan. Call scan_universe first.` };
       }
-      // Resolve universe entry to surface eToro min size in guardrail check
-      const { getUniverseEntry } = await import("./universe");
-      const uEntry = getUniverseEntry(input.symbol);
+      // Resolve universe entry from whichever universe is active for this run
+      const activeUniverse = ctx.overrides?.universe;
+      const uEntry = activeUniverse
+        ? activeUniverse.find((u) => u.symbol === input.symbol)
+        : (await import("./universe")).getUniverseEntry(input.symbol);
+
+      // Tactical cap: if requested size exceeds the agent-kind cap, clamp it
+      const maxOverride = ctx.overrides?.maxPositionSizeUsd;
+      const sizeUsd = maxOverride !== undefined
+        ? Math.min(input.sizeUsd, maxOverride)
+        : input.sizeUsd;
+
       const req: OpenTradeRequest = {
         env: ctx.environment,
         asset: input.symbol,
         instrumentId: cand.instrumentId,
         direction: input.direction,
-        sizeUsd: input.sizeUsd,
+        sizeUsd,
         leverage: input.leverage,
         entryPrice: cand.currentPrice,
         stopLoss: input.stopLoss,
@@ -312,6 +333,7 @@ export async function handleToolCall(
         conviction: input.conviction,
         minSizeUsd: uEntry?.minSizeUsd,
         assetClass: uEntry?.assetClass,
+        agentKind: ctx.overrides?.agentKind,
       };
       const result = await openTrade(req);
       return result;
@@ -345,6 +367,7 @@ export async function handleToolCall(
         reasoning: input.reasoning,
         hvfScore: input.hvfScore ?? null,
         conviction: null,
+        agentKind: ctx.overrides?.agentKind,
       });
       return { id, ok: true };
     }

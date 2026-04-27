@@ -36,9 +36,21 @@ async function resolveInstrument(entry: UniverseEntry): Promise<number | null> {
   return null;
 }
 
-/** Pull eToro daily candles and convert to our OHLC shape. */
-async function getCandlesFor(instrumentId: number): Promise<OHLC[]> {
-  const candles = await etoro.getCandles(instrumentId, "OneDay", 250);
+export type CandlePeriod = "OneMinute" | "OneHour" | "OneDay" | "OneWeek";
+
+// 15-minute candles aren't directly supported by eToro's enum — use
+// OneHour for now and let the model interpret accordingly. Could
+// upgrade to a proper 15m fetcher if eToro adds it.
+const TIMEFRAME_TO_ETORO: Record<string, CandlePeriod> = {
+  "1m": "OneMinute",
+  "15m": "OneHour",   // best available <hour granularity from eToro
+  "1h": "OneHour",
+  "1d": "OneDay",
+  "1w": "OneWeek",
+};
+
+async function getCandlesFor(instrumentId: number, period: CandlePeriod = "OneDay", count = 250): Promise<OHLC[]> {
+  const candles = await etoro.getCandles(instrumentId, period, count);
   return candles.map((c) => ({
     time: Math.floor(new Date(c.fromDate).getTime() / 1000),
     open: c.open,
@@ -48,18 +60,30 @@ async function getCandlesFor(instrumentId: number): Promise<OHLC[]> {
   }));
 }
 
+export interface ScanOptions {
+  /** Override the universe — defaults to the strategic universe */
+  universe?: UniverseEntry[];
+  /** Candle timeframe — defaults to "1d" for strategic */
+  timeframe?: keyof typeof TIMEFRAME_TO_ETORO;
+  /** Number of candles to fetch */
+  candleCount?: number;
+}
+
 /**
  * Scan the universe in parallel, return candidates sorted by HVF score desc.
  * Skips instruments that fail to resolve or have insufficient data.
  */
-export async function scanUniverse(): Promise<ScanCandidate[]> {
-  const tasks = UNIVERSE.map(async (entry): Promise<ScanCandidate | null> => {
+export async function scanUniverse(opts: ScanOptions = {}): Promise<ScanCandidate[]> {
+  const universe = opts.universe || UNIVERSE;
+  const period = TIMEFRAME_TO_ETORO[opts.timeframe || "1d"] || "OneDay";
+  const candleCount = opts.candleCount || 250;
+  const tasks = universe.map(async (entry): Promise<ScanCandidate | null> => {
     try {
       const instrumentId = await resolveInstrument(entry);
       if (!instrumentId) return null;
 
       const [candles, rates] = await Promise.all([
-        getCandlesFor(instrumentId),
+        getCandlesFor(instrumentId, period, candleCount),
         etoro.getRates([instrumentId], "paper"),
       ]);
 

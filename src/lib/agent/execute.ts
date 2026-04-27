@@ -12,6 +12,8 @@ import { etoro } from "@/lib/etoro/client";
 import { checkGuardrails, recordEntry, recordClose, type ProposedTrade } from "./guardrails";
 import type { AgentEnvironment } from "@/lib/neon";
 
+export type AgentKind = "strategic" | "tactical";
+
 export interface DecisionContext {
   decisionType: "open" | "close" | "modify" | "hold" | "scan_only";
   asset: string | null;
@@ -19,6 +21,7 @@ export interface DecisionContext {
   hvfScore: number | null;
   conviction: "high" | "medium" | "low" | null;
   rawContext?: unknown;
+  agentKind?: AgentKind;
 }
 
 /** Record a non-trading decision (hold / scan_only). */
@@ -29,11 +32,11 @@ export async function recordObservationDecision(
   const sql = db();
   const rows = await sql`
     INSERT INTO agent_decisions (
-      environment, decision_type, asset, reasoning, hvf_score, conviction,
-      outcome_status, raw_context
+      environment, agent_kind, decision_type, asset, reasoning,
+      hvf_score, conviction, outcome_status, raw_context
     ) VALUES (
-      ${env}, ${ctx.decisionType}, ${ctx.asset}, ${ctx.reasoning},
-      ${ctx.hvfScore}, ${ctx.conviction}, 'executed',
+      ${env}, ${ctx.agentKind || 'strategic'}, ${ctx.decisionType}, ${ctx.asset},
+      ${ctx.reasoning}, ${ctx.hvfScore}, ${ctx.conviction}, 'executed',
       ${ctx.rawContext ? JSON.stringify(ctx.rawContext) : null}::jsonb
     )
     RETURNING id
@@ -59,6 +62,10 @@ export interface OpenTradeRequest {
   minSizeUsd?: number;
   /** Asset class — used for market-hours guardrail */
   assetClass?: "crypto" | "commodity" | "equity" | "etf";
+  /** Which agent placed this trade — strategic (4h daily) or tactical (30m 15min) */
+  agentKind?: AgentKind;
+  /** Override max position size for this trade (tactical takes smaller positions) */
+  positionSizeOverride?: number;
 }
 
 export interface OpenTradeResult {
@@ -113,11 +120,11 @@ export async function openTrade(req: OpenTradeRequest): Promise<OpenTradeResult>
   // ── 2. Insert decision row (pending) ─────────────────────────
   const decRows = await sql`
     INSERT INTO agent_decisions (
-      environment, decision_type, asset, reasoning, hvf_score, conviction,
-      outcome_status, raw_context
+      environment, agent_kind, decision_type, asset, reasoning,
+      hvf_score, conviction, outcome_status, raw_context
     ) VALUES (
-      ${req.env}, 'open', ${req.asset}, ${req.reasoning},
-      ${req.hvfScore}, ${req.conviction}, 'pending',
+      ${req.env}, ${req.agentKind || 'strategic'}, 'open', ${req.asset},
+      ${req.reasoning}, ${req.hvfScore}, ${req.conviction}, 'pending',
       ${JSON.stringify({ proposed: req, details: gate.details })}::jsonb
     )
     RETURNING id
@@ -170,11 +177,12 @@ export async function openTrade(req: OpenTradeRequest): Promise<OpenTradeResult>
 
     const tradeRows = await sql`
       INSERT INTO trades (
-        decision_id, environment, etoro_position_id, etoro_order_id,
+        decision_id, environment, agent_kind, etoro_position_id, etoro_order_id,
         asset, instrument_id, side, entry_price, size_usd, units,
         stop_loss, take_profit, leverage, status
       ) VALUES (
-        ${decisionId}, ${req.env}, ${etoroPositionId || null}, ${placement.orderID || null},
+        ${decisionId}, ${req.env}, ${req.agentKind || 'strategic'},
+        ${etoroPositionId || null}, ${placement.orderID || null},
         ${req.asset}, ${req.instrumentId}, ${req.direction},
         ${openRate}, ${req.sizeUsd}, ${units},
         ${req.stopLoss}, ${req.takeProfit}, ${req.leverage}, ${tradeStatus}

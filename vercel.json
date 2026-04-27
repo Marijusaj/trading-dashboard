@@ -11,6 +11,10 @@
     {
       "path": "/api/agent/run",
       "schedule": "0 */4 * * *"
+    },
+    {
+      "path": "/api/agent/tactical",
+      "schedule": "*/30 * * * *"
     }
   ]
 }
