@@ -17,7 +17,9 @@ export const TACTICAL_UNIVERSE: UniverseEntry[] = [
     display: "Avalanche",
     assetClass: "crypto",
     thesis: "L1 with intraday volatility, tracks SOL beta",
-    shortAllowed: true,
+    // eToro errorCode 747 observed 2026-04-27: 'opening position is disallowed
+    // for Sell positions of this instrument'. Account/jurisdiction restriction.
+    shortAllowed: false,
     instrumentId: null,
     minSizeUsd: 10,
   },

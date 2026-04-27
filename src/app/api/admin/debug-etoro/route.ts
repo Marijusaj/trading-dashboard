@@ -96,6 +96,34 @@ export async function GET(req: NextRequest) {
   const listTradesLimit = req.nextUrl.searchParams.get("listTrades");
   const relinkTrade = req.nextUrl.searchParams.get("relinkTrade"); // tradeId,positionId
   const inspectDecisionId = req.nextUrl.searchParams.get("inspectDecision");
+  const forceClosePosId = req.nextUrl.searchParams.get("forceClose"); // env=paper&forceClose=positionId,instrumentId
+
+  // Force-close a position via direct eToro API call. Use when an
+  // agent trade has bad params and we want to exit before SL hits.
+  if (forceClosePosId) {
+    const [posId, instId] = forceClosePosId.split(",");
+    if (!posId || !instId) {
+      return NextResponse.json({ error: "format: positionId,instrumentId" }, { status: 400 });
+    }
+    try {
+      const { etoro } = await import("@/lib/etoro/client");
+      const result = await etoro.closePosition(env, posId, Number(instId));
+      // Also mark our trade row as closed
+      const { db } = await import("@/lib/neon");
+      const sql = db();
+      await sql`
+        UPDATE trades
+           SET status        = 'closed',
+               closed_at     = now(),
+               exit_reason   = 'manual_close',
+               reconciled_at = now()
+         WHERE etoro_position_id = ${posId} AND status = 'open'
+      `;
+      return NextResponse.json({ ok: true, closed: result });
+    } catch (e) {
+      return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, { status: 500 });
+    }
+  }
 
   // Dump full raw_context + reasoning for a specific decision
   if (inspectDecisionId) {

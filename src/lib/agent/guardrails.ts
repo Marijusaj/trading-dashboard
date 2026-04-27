@@ -229,8 +229,35 @@ export async function checkGuardrails(trade: ProposedTrade): Promise<GuardrailRe
     };
   }
 
+  // 9. Min SL distance per asset class — eToro silently widens too-tight stops.
+  //    Observed 2026-04-27: agent set 0.27% SL on LINK short, eToro widened
+  //    to 5%, destroying R:R from 2.6 → 0.14. We must respect the platform
+  //    minimums BEFORE submitting to keep R:R honest.
+  const slDistancePct = (risk / trade.entryPrice) * 100;
+  const minSlPct = MIN_SL_DISTANCE_PCT[trade.assetClass || "crypto"][trade.direction] ?? 1;
+  if (slDistancePct < minSlPct) {
+    return {
+      allowed: false,
+      violation: "stop_too_tight_for_etoro",
+      details: {
+        proposedSlPct: Number(slDistancePct.toFixed(2)),
+        minSlPct,
+        hint: `eToro silently widens stops below platform minimum, destroying R:R. Use SL >= ${minSlPct}% from entry.`,
+      },
+    };
+  }
+
   return { allowed: true, violation: null, details: { rewardRiskRatio: Number(rr.toFixed(2)) } };
 }
+
+/** Minimum SL distance (% from entry) eToro will respect WITHOUT widening.
+ *  Empirically observed — refine as we discover more cases. */
+const MIN_SL_DISTANCE_PCT: Record<string, { long: number; short: number }> = {
+  crypto:    { long: 1.0, short: 5.0 },  // Shorts especially restrictive
+  commodity: { long: 2.0, short: 2.0 },  // CFD margin-based
+  equity:    { long: 1.0, short: 1.0 },
+  etf:       { long: 1.0, short: 1.0 },
+};
 
 // ────────────────────────────────────────────────────────────────────
 // State updaters — called from agent execute layer after API actions

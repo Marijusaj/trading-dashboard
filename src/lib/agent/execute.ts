@@ -202,6 +202,59 @@ export async function openTrade(req: OpenTradeRequest): Promise<OpenTradeResult>
 
     if (outcome === "executed") {
       await recordEntry(req.env);
+
+      // ── Post-trade SL drift verification ─────────────────────────
+      // eToro silently widens stops below platform minimums (observed:
+      // crypto short SL of 0.27% widened to 5%). Cross-check the actual
+      // open position's SL/TP. If R:R fell below half of what we approved,
+      // immediately close the trade — better a small slippage loss than
+      // an asymmetric position eating capital.
+      if (etoroPositionId) {
+        try {
+          const portfolio = await etoro.getPortfolio(req.env);
+          const actualPos = portfolio.positions.find((p) => String(p.positionID) === etoroPositionId);
+          if (actualPos && actualPos.stopLossRate && actualPos.takeProfitRate) {
+            const actualSl = Number(actualPos.stopLossRate);
+            const actualTp = Number(actualPos.takeProfitRate);
+            const actualEntry = Number(actualPos.openRate);
+            const risk = Math.abs(actualEntry - actualSl);
+            const reward = Math.abs(actualTp - actualEntry);
+            const actualRr = risk > 0 ? reward / risk : 0;
+            const proposedRr = Math.abs(req.takeProfit - req.entryPrice) / Math.abs(req.entryPrice - req.stopLoss);
+            if (actualRr < proposedRr * 0.5 || actualRr < 1.0) {
+              // SL was widened so much R:R degraded materially. Close it.
+              try {
+                await etoro.closePosition(req.env, etoroPositionId, req.instrumentId);
+                await sql`
+                  UPDATE trades
+                     SET status      = 'closed',
+                         closed_at   = now(),
+                         exit_reason = 'manual_close',
+                         reconciled_at = now()
+                   WHERE id = ${tradeId}
+                `;
+                await sql`
+                  UPDATE agent_decisions
+                     SET reasoning = ${req.reasoning + ` | AUTO-CLOSED: eToro widened SL from ${req.stopLoss} to ${actualSl}, R:R degraded ${proposedRr.toFixed(2)} → ${actualRr.toFixed(2)}`}
+                   WHERE id = ${decisionId}
+                `;
+                return {
+                  decisionId,
+                  tradeId,
+                  etoroPositionId,
+                  status: "failed",
+                  message: `Auto-closed: eToro widened SL ${req.stopLoss}→${actualSl}, R:R ${proposedRr.toFixed(2)}→${actualRr.toFixed(2)}`,
+                  guardrailViolation: "post_trade_sl_drift",
+                };
+              } catch (closeErr) {
+                console.error("Failed to auto-close drifted trade", closeErr);
+              }
+            }
+          }
+        } catch (verifyErr) {
+          console.warn("Post-trade verification failed", verifyErr);
+        }
+      }
     }
 
     const verb =
