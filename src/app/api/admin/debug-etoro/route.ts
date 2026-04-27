@@ -142,6 +142,8 @@ export async function GET(req: NextRequest) {
 
   // Force-close a position via direct eToro API call. Use when an
   // agent trade has bad params and we want to exit before SL hits.
+  // Now also captures best-effort exit_price + pnl_usd so the trade
+  // contributes to learning/self-review.
   if (forceClosePosId) {
     const [posId, instId] = forceClosePosId.split(",");
     if (!posId || !instId) {
@@ -150,18 +152,44 @@ export async function GET(req: NextRequest) {
     try {
       const { etoro } = await import("@/lib/etoro/client");
       const result = await etoro.closePosition(env, posId, Number(instId));
-      // Also mark our trade row as closed
       const { db } = await import("@/lib/neon");
       const sql = db();
+      // Pull trade context to compute PnL
+      const tRows = (await sql`
+        SELECT id, side, entry_price, size_usd, stop_loss
+          FROM trades
+         WHERE etoro_position_id = ${posId} AND status = 'open'
+      `) as unknown as { id: string; side: "long" | "short"; entry_price: number; size_usd: number; stop_loss: number }[];
+      let exitPrice: number | null = null;
+      let pnlUsd = 0;
+      let rMultiple: number | null = null;
+      if (tRows.length > 0) {
+        const t = tRows[0];
+        try {
+          const rates = await etoro.getRates([Number(instId)], env);
+          if (rates.length > 0) {
+            exitPrice = (rates[0].bid + rates[0].ask) / 2;
+            const direction = t.side === "long" ? 1 : -1;
+            const pctMove = ((exitPrice - Number(t.entry_price)) / Number(t.entry_price)) * direction;
+            pnlUsd = Number(t.size_usd) * pctMove;
+            const riskPerUnit = Math.abs(Number(t.entry_price) - Number(t.stop_loss));
+            const moveAbs = Math.abs(exitPrice - Number(t.entry_price));
+            if (riskPerUnit > 0) rMultiple = (moveAbs / riskPerUnit) * (pnlUsd >= 0 ? 1 : -1);
+          }
+        } catch {/* leave null */}
+      }
       await sql`
         UPDATE trades
            SET status        = 'closed',
                closed_at     = now(),
+               exit_price    = ${exitPrice},
+               pnl_usd       = ${pnlUsd || null},
+               r_multiple    = ${rMultiple},
                exit_reason   = 'manual_close',
                reconciled_at = now()
          WHERE etoro_position_id = ${posId} AND status = 'open'
       `;
-      return NextResponse.json({ ok: true, closed: result });
+      return NextResponse.json({ ok: true, closed: result, pnl_usd: pnlUsd, exit_price: exitPrice, r_multiple: rMultiple });
     } catch (e) {
       return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, { status: 500 });
     }

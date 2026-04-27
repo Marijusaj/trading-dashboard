@@ -95,18 +95,47 @@ export async function reconcileEnv(env: AgentEnvironment): Promise<ReconcileSumm
           // Position still open — nothing to do
           continue;
         }
-        // Position closed externally (TP/SL hit, manual close, etc.)
+        // Position closed externally (TP/SL hit, manual close, etc.).
+        // Best-effort PnL: guess exit_price from SL/TP if current price
+        // overshot one, else use current mid-rate.
+        let exitPrice: number | null = null;
+        let pnlUsd = 0;
+        let exitReason: "stop" | "target" | "expired" = "expired";
+        try {
+          const rates = await etoro.getRates([Number(t.instrument_id)], env);
+          if (rates.length > 0) {
+            const mid = (rates[0].bid + rates[0].ask) / 2;
+            const sl = Number(t.stop_loss);
+            const tp = Number(t.take_profit);
+            const entry = Number(t.entry_price);
+            if (t.side === "long") {
+              if (mid <= sl) { exitPrice = sl; exitReason = "stop"; }
+              else if (mid >= tp) { exitPrice = tp; exitReason = "target"; }
+              else { exitPrice = mid; }
+            } else {
+              if (mid >= sl) { exitPrice = sl; exitReason = "stop"; }
+              else if (mid <= tp) { exitPrice = tp; exitReason = "target"; }
+              else { exitPrice = mid; }
+            }
+            const direction = t.side === "long" ? 1 : -1;
+            const pctMove = ((exitPrice - entry) / entry) * direction;
+            pnlUsd = Number(t.size_usd) * pctMove;
+          }
+        } catch {
+          // Non-fatal — leave null
+        }
         await sql`
           UPDATE trades
              SET status        = 'closed',
                  closed_at     = now(),
-                 exit_reason   = 'expired',
+                 exit_price    = ${exitPrice},
+                 pnl_usd       = ${pnlUsd || null},
+                 exit_reason   = ${exitReason},
                  reconciled_at = now()
            WHERE id = ${t.id}
         `;
-        // Best-effort: don't know exact exit price, leave null. PnL too.
-        await recordClose(env, 0); // 0 PnL since we don't know — don't bias counters
-        summary.closed_externally.push(t.id);
+        await recordClose(env, pnlUsd);
+        summary.closed_externally.push(`${t.id} (${exitReason}, ~$${pnlUsd.toFixed(2)})`);
         continue;
       }
 
