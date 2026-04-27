@@ -77,7 +77,7 @@ For each open position:
 - Crypto LONGS need SL ≥ 1%.
 - Commodity CFDs need ≥ 2% both directions.
 - Equity/ETF need ≥ 1%.
-- Set SL respecting these minimums; the guardrail rejects tighter stops with `stop_too_tight_for_etoro`.
+- Set SL respecting these minimums; the guardrail rejects tighter stops with violation 'stop_too_tight_for_etoro'.
 
 # Output format
 Use the provided tools to take action. Always emit a final 'record_observation' tool call summarizing what you decided in this scan, even if you took no trade.
