@@ -388,8 +388,33 @@ export const etoro = {
           });
         }
       } catch (e) {
-        // Skip the bad chunk, keep going
-        console.warn("rates chunk failed", chunk, e);
+        // The chunk request failed — ONE bad ID inside takes the whole
+        // batch down. Fall back to per-ID requests so the rest of the
+        // chunk's instruments still get their rates.
+        const errMsg = e instanceof Error ? e.message : String(e);
+        console.warn(`rates chunk failed ids=[${chunk.join(",")}] env=${env} err=${errMsg} — falling back to per-ID`);
+        const failed: number[] = [];
+        for (const id of chunk) {
+          try {
+            const single = await request<RatesResponse>(env, "/market-data/instruments/rates", {
+              query: { instrumentIds: String(id) },
+            });
+            for (const r of single.rates || []) {
+              results.push({
+                instrumentID: r.instrumentID,
+                bid: r.bid,
+                ask: r.ask,
+                close: r.lastExecution,
+                ts: r.date,
+              });
+            }
+          } catch {
+            failed.push(id);
+          }
+        }
+        if (failed.length > 0) {
+          console.warn(`rates per-ID fallback also failed ids=[${failed.join(",")}] env=${env}`);
+        }
       }
     }
     return results;
