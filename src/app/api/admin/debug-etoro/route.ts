@@ -97,6 +97,47 @@ export async function GET(req: NextRequest) {
   const relinkTrade = req.nextUrl.searchParams.get("relinkTrade"); // tradeId,positionId
   const inspectDecisionId = req.nextUrl.searchParams.get("inspectDecision");
   const forceClosePosId = req.nextUrl.searchParams.get("forceClose"); // env=paper&forceClose=positionId,instrumentId
+  const cleanReasoning = req.nextUrl.searchParams.get("cleanReasoning"); // ?cleanReasoning=1 — backfill bad rows
+
+  // One-shot: re-sanitize any agent_decisions / agent_memory rows whose
+  // text contains the Haiku XML-tag-bleed artifact. Idempotent.
+  if (cleanReasoning) {
+    const { db } = await import("@/lib/neon");
+    const { sanitizeReasoning } = await import("@/lib/agent/execute");
+    const sql = db();
+    const dirtyDecisions = (await sql`
+      SELECT id, reasoning FROM agent_decisions
+       WHERE reasoning ~ '<parameter\\b' OR reasoning ~ '\\\\",\\s*\\n'
+       ORDER BY ts DESC LIMIT 200
+    `) as unknown as { id: string; reasoning: string }[];
+    const dirtyMemory = (await sql`
+      SELECT id, content FROM agent_memory
+       WHERE content ~ '<parameter\\b' OR content ~ '\\\\",\\s*\\n'
+       ORDER BY ts DESC LIMIT 200
+    `) as unknown as { id: string; content: string }[];
+
+    let decUpdated = 0;
+    for (const r of dirtyDecisions) {
+      const cleaned = sanitizeReasoning(r.reasoning);
+      if (cleaned !== r.reasoning) {
+        await sql`UPDATE agent_decisions SET reasoning = ${cleaned} WHERE id = ${r.id}`;
+        decUpdated++;
+      }
+    }
+    let memUpdated = 0;
+    for (const r of dirtyMemory) {
+      const cleaned = sanitizeReasoning(r.content);
+      if (cleaned !== r.content) {
+        await sql`UPDATE agent_memory SET content = ${cleaned} WHERE id = ${r.id}`;
+        memUpdated++;
+      }
+    }
+    return NextResponse.json({
+      ok: true,
+      decisions: { found: dirtyDecisions.length, updated: decUpdated },
+      memory:    { found: dirtyMemory.length,    updated: memUpdated },
+    });
+  }
 
   // Force-close a position via direct eToro API call. Use when an
   // agent trade has bad params and we want to exit before SL hits.

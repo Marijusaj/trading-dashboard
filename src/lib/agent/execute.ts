@@ -24,19 +24,47 @@ export interface DecisionContext {
   agentKind?: AgentKind;
 }
 
+/**
+ * Sanitize Haiku's `reasoning` strings before storing.
+ *
+ * Observed quirk: Haiku occasionally regresses from JSON tool-call format
+ * back to Anthropic's XML tool-call format mid-string and emits something
+ * like:    `...next scan in 30m.",\n<parameter name="topAsset">AVAX`
+ * inside the `reasoning` field. The Anthropic SDK does parse the JSON
+ * envelope correctly, so the literal characters bleed into the string.
+ *
+ * Strip:
+ *   - trailing `",` / `",\n` quote-comma escape artifacts
+ *   - any `<parameter ...>...</parameter>` or unclosed `<parameter ...>...`
+ *     tag tail
+ *   - any other stray XML-ish `<...>` tag at the end
+ */
+export function sanitizeReasoning(input: string | null | undefined): string {
+  if (!input) return "";
+  let s = String(input);
+  // Drop the artifact: ends with  `",\n<parameter ...>VALUE`  or similar
+  s = s.replace(/["']?,?\s*\n?\s*<parameter\b[^>]*>[\s\S]*$/i, "");
+  // Strip any stray paired XML tags
+  s = s.replace(/<\/?[a-zA-Z][^>]*>/g, "");
+  // Trim trailing escape junk: stray quotes, commas, backslashes, whitespace
+  s = s.replace(/[\\"',\s]+$/g, "");
+  return s.trim();
+}
+
 /** Record a non-trading decision (hold / scan_only). */
 export async function recordObservationDecision(
   env: AgentEnvironment,
   ctx: DecisionContext,
 ): Promise<string> {
   const sql = db();
+  const cleanReasoning = sanitizeReasoning(ctx.reasoning);
   const rows = await sql`
     INSERT INTO agent_decisions (
       environment, agent_kind, decision_type, asset, reasoning,
       hvf_score, conviction, outcome_status, raw_context
     ) VALUES (
       ${env}, ${ctx.agentKind || 'strategic'}, ${ctx.decisionType}, ${ctx.asset},
-      ${ctx.reasoning}, ${ctx.hvfScore}, ${ctx.conviction}, 'executed',
+      ${cleanReasoning}, ${ctx.hvfScore}, ${ctx.conviction}, 'executed',
       ${ctx.rawContext ? JSON.stringify(ctx.rawContext) : null}::jsonb
     )
     RETURNING id
@@ -79,6 +107,9 @@ export interface OpenTradeResult {
 
 /** Open a position. All paths return a structured result; never throws. */
 export async function openTrade(req: OpenTradeRequest): Promise<OpenTradeResult> {
+  // Sanitize incoming reasoning string up-front so every storage path
+  // (guardrail-blocked, pending, executed, rejected) gets clean text.
+  req = { ...req, reasoning: sanitizeReasoning(req.reasoning) };
   const sql = db();
   const proposed: ProposedTrade = {
     environment: req.env,
@@ -367,7 +398,7 @@ export async function closeTrade(req: CloseTradeRequest): Promise<{ ok: boolean;
       environment, decision_type, asset, reasoning,
       outcome_status, trade_id
     ) VALUES (
-      ${req.env}, 'close', NULL, ${req.reasoning},
+      ${req.env}, 'close', NULL, ${sanitizeReasoning(req.reasoning)},
       'executed', ${req.tradeId}
     )
   `;

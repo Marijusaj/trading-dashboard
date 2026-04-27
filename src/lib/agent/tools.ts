@@ -5,7 +5,7 @@ import { db } from "@/lib/neon";
 import { etoro } from "@/lib/etoro/client";
 import { scanUniverse, type ScanCandidate, type ScanOptions } from "./scanner";
 import { planRisk, analyzeHVF, type OHLC } from "./hvf";
-import { openTrade, closeTrade, recordObservationDecision, type OpenTradeRequest, type AgentKind } from "./execute";
+import { openTrade, closeTrade, recordObservationDecision, sanitizeReasoning, type OpenTradeRequest, type AgentKind } from "./execute";
 import type { UniverseEntry } from "./universe";
 import type { AgentEnvironment } from "@/lib/neon";
 
@@ -469,9 +469,10 @@ export async function handleToolCall(
 
     case "save_memory": {
       const sql = db();
+      const cleanContent = sanitizeReasoning(input.content);
       const rows = await sql`
         INSERT INTO agent_memory (category, asset, content, importance)
-        VALUES (${input.category}, ${input.asset || null}, ${input.content},
+        VALUES (${input.category}, ${input.asset || null}, ${cleanContent},
                 ${input.importance ?? 5})
         RETURNING id
       ` as unknown as { id: string }[];
