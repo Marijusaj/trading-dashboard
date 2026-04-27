@@ -36,15 +36,25 @@ async function resolveInstrument(entry: UniverseEntry): Promise<number | null> {
   return null;
 }
 
-export type CandlePeriod = "OneMinute" | "OneHour" | "OneDay" | "OneWeek";
+export type CandlePeriod =
+  | "OneMinute"
+  | "FiveMinutes"
+  | "TenMinutes"
+  | "FifteenMinutes"
+  | "ThirtyMinutes"
+  | "OneHour"
+  | "FourHours"
+  | "OneDay"
+  | "OneWeek";
 
-// 15-minute candles aren't directly supported by eToro's enum — use
-// OneHour for now and let the model interpret accordingly. Could
-// upgrade to a proper 15m fetcher if eToro adds it.
 const TIMEFRAME_TO_ETORO: Record<string, CandlePeriod> = {
   "1m": "OneMinute",
-  "15m": "OneHour",   // best available <hour granularity from eToro
+  "5m": "FiveMinutes",
+  "10m": "TenMinutes",
+  "15m": "FifteenMinutes",
+  "30m": "ThirtyMinutes",
   "1h": "OneHour",
+  "4h": "FourHours",
   "1d": "OneDay",
   "1w": "OneWeek",
 };

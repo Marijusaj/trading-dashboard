@@ -237,10 +237,15 @@ interface InstrumentsListResponse {
 // ────────────────────────────────────────────────────────────────────
 
 const CANDLE_PERIOD_MAP = {
-  OneMinute: "OneMinute",
-  OneHour: "OneHour",
-  OneDay: "OneDay",
-  OneWeek: "OneWeek",
+  OneMinute:        "OneMinute",
+  FiveMinutes:      "FiveMinutes",
+  TenMinutes:       "TenMinutes",
+  FifteenMinutes:   "FifteenMinutes",
+  ThirtyMinutes:    "ThirtyMinutes",
+  OneHour:          "OneHour",
+  FourHours:        "FourHours",
+  OneDay:           "OneDay",
+  OneWeek:          "OneWeek",
 } as const;
 
 const RATES_BATCH_SIZE = 5;  // Larger batches occasionally 500
