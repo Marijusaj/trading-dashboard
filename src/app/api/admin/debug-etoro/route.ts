@@ -95,6 +95,21 @@ export async function GET(req: NextRequest) {
   const abandonTradeId = req.nextUrl.searchParams.get("abandonTrade");
   const listTradesLimit = req.nextUrl.searchParams.get("listTrades");
   const relinkTrade = req.nextUrl.searchParams.get("relinkTrade"); // tradeId,positionId
+  const inspectDecisionId = req.nextUrl.searchParams.get("inspectDecision");
+
+  // Dump full raw_context + reasoning for a specific decision
+  if (inspectDecisionId) {
+    const { db } = await import("@/lib/neon");
+    const sql = db();
+    const rows = await sql`
+      SELECT id, ts, environment, agent_kind, decision_type, asset,
+             reasoning, hvf_score, conviction, outcome_status,
+             guardrail_violation, raw_context, trade_id
+        FROM agent_decisions
+       WHERE id = ${inspectDecisionId}
+    `;
+    return NextResponse.json({ ok: true, decision: rows[0] || null });
+  }
 
   // Re-link a wrongly-cancelled trade to its actual eToro position.
   // Used to recover from the statusID=3 misinterpretation bug.
