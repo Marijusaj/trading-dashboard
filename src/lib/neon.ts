@@ -1,12 +1,11 @@
 // Neon Postgres serverless client.
 // Used for hot agent state: decisions, trades, memory, guardrail tracking.
 // Schema lives in /db/migrations/.
-import { neon, neonConfig } from "@neondatabase/serverless";
+import { neon } from "@neondatabase/serverless";
 
-// Vercel + Neon: HTTP-only fetcher (works in serverless without WebSocket).
-// Setting fetchConnectionCache=true reuses the connection across invocations
-// in the same Lambda runtime, reducing latency.
-neonConfig.fetchConnectionCache = true;
+// Connection caching is now ON by default in @neondatabase/serverless
+// (the fetchConnectionCache config is deprecated). HTTP fetcher
+// reuses connections within a Lambda warm container automatically.
 
 let _sql: ReturnType<typeof neon> | null = null;
 
