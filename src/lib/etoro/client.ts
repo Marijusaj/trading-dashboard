@@ -470,7 +470,12 @@ export const etoro = {
     };
   },
 
-  /** GET /trading/info/{env}/orders/{orderId} */
+  /** GET /trading/info/{env}/orders/{orderId}
+   *
+   * eToro's `positions[]` field on the order response is the
+   * authoritative signal: if `isOpen:true` exists for any position,
+   * the order was filled. The actual entry rate is in `rate` (NOT
+   * `openRate`, which is the field we previously chased and missed). */
   async getOrderInfo(env: EtoroEnv, orderId: string): Promise<EtoroOrderInfo> {
     interface RawInfo {
       orderID?: number | string;
@@ -481,7 +486,12 @@ export const etoro = {
       errorCode?: number;
       errorMessage?: string;
       requestOccurred?: string;
-      positions?: { positionID?: number | string; openRate?: number }[];
+      positions?: {
+        positionID?: number | string;
+        rate?: number;
+        openRate?: number;
+        isOpen?: boolean;
+      }[];
     }
     const raw = await request<RawInfo>(env, `/trading/info/${envToPath(env)}/orders/${encodeURIComponent(orderId)}`);
     const firstPos = raw.positions?.[0];
@@ -494,7 +504,8 @@ export const etoro = {
       errorCode: Number(raw.errorCode ?? 0),
       errorMessage: raw.errorMessage,
       positionID: firstPos?.positionID ? String(firstPos.positionID) : null,
-      openRate: firstPos?.openRate ?? null,
+      openRate: firstPos?.rate ?? firstPos?.openRate ?? null,
+      positionIsOpen: firstPos?.isOpen,
       requestOccurred: raw.requestOccurred,
     };
   },
@@ -554,23 +565,23 @@ export const etoro = {
       } catch {
         // ignore transient lookup errors during polling
       }
-      // Terminal states:
+      // Source of truth: positions[].isOpen + errorCode. statusID alone
+      // is unreliable (observed statusID=3 with isOpen=true producing a
+      // valid filled position).
       if (info.errorCode && info.errorCode !== 0) {
         return { placement, finalInfo: info, outcome: "rejected" };
       }
-      if (info.statusID === 1) {
+      if (info.positionIsOpen && info.positionID) {
+        // Real position exists → executed regardless of statusID
         return { placement, finalInfo: info, outcome: "executed" };
       }
       if (info.statusID === 2) {
         return { placement, finalInfo: info, outcome: "cancelled" };
       }
-      if (info.statusID === 3) {
-        return { placement, finalInfo: info, outcome: "rejected" };
-      }
       if (info.statusID === 11) {
-        // Market closed (weekend on CFDs) — order will fire at open
         return { placement, finalInfo: info, outcome: "pending_market_open" };
       }
+      // Status 0 (pending), or 3/4 with no positions yet → keep polling
       await new Promise((r) => setTimeout(r, interval));
     }
     return { placement, finalInfo: info, outcome: "pending" };

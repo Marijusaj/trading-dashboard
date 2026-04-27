@@ -97,9 +97,20 @@ export interface EtoroOrderPlacement {
 }
 
 /** Detailed order info from /trading/info/{env}/orders/{orderId}.
- *  statusID enum: 0=Pending, 1=Executed, 2=Cancelled, 3=Rejected,
- *                 4=PartiallyExecuted, 11=PendingMarketOpen (undocumented,
- *                 observed when market closed for weekend on CFDs). */
+ *
+ * statusID is unreliable as a single source of truth — observed values:
+ *   0  = Pending (queued, not yet processed)
+ *   1  = Executed (sometimes; not always present even when filled)
+ *   2  = Cancelled (user-cancelled or system-cancelled with no fill)
+ *   3  = Reported as "Rejected" in docs BUT in practice often appears
+ *        when an order has been COMPLETED/FILLED with a position created.
+ *   4  = Partially Executed
+ *   11 = Pending market open (CFD weekend queue)
+ *
+ * The reliable signal is the `positions[]` array combined with
+ * `errorCode`. If `positions[0].isOpen=true` and errorCode=0, the
+ * order produced an open position regardless of statusID.
+ */
 export interface EtoroOrderInfo {
   orderID: string;
   instrumentID: number;
@@ -108,7 +119,8 @@ export interface EtoroOrderInfo {
   statusID: number;
   errorCode: number;
   errorMessage?: string;
-  positionID?: string | null;        // populated once status=1
-  openRate?: number | null;
+  positionID?: string | null;        // populated when a position exists
+  openRate?: number | null;          // entry rate of the produced position
+  positionIsOpen?: boolean;          // true if positions[0].isOpen
   requestOccurred?: string;
 }

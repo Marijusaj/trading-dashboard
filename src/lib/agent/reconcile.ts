@@ -111,21 +111,12 @@ export async function reconcileEnv(env: AgentEnvironment): Promise<ReconcileSumm
       }
 
       // ── Case B: trade is pending (no positionID), check the order
+      // Source of truth = positions[].isOpen + errorCode. statusID
+      // alone is unreliable.
       if (hasOrder) {
         const info = await etoro.getOrderInfo(env, t.etoro_order_id!);
-        if (info.statusID === 1) {
-          // Executed since last check
-          await sql`
-            UPDATE trades
-               SET etoro_position_id = ${info.positionID || null},
-                   entry_price       = ${info.openRate ?? t.entry_price},
-                   units             = ${info.units || null},
-                   reconciled_at     = now()
-             WHERE id = ${t.id}
-          `;
-          await recordEntry(env);
-          summary.resolved_executed.push(t.id);
-        } else if (info.statusID === 2 || info.statusID === 3 || info.statusID === 4) {
+        if (info.errorCode && info.errorCode !== 0) {
+          // Real rejection
           await sql`
             UPDATE trades
                SET status        = 'cancelled',
@@ -134,12 +125,32 @@ export async function reconcileEnv(env: AgentEnvironment): Promise<ReconcileSumm
                    reconciled_at = now()
              WHERE id = ${t.id}
           `;
-          summary.resolved_cancelled.push(t.id);
-        } else if (info.statusID === 11 || info.statusID === 0) {
-          // Still pending (e.g. weekend market) — leave alone
-          summary.still_pending.push(t.id);
+          summary.resolved_cancelled.push(`${t.id} (errorCode ${info.errorCode}: ${info.errorMessage || ""})`);
+        } else if (info.positionIsOpen && info.positionID) {
+          // Position created since last check
+          await sql`
+            UPDATE trades
+               SET etoro_position_id = ${info.positionID},
+                   entry_price       = ${info.openRate ?? t.entry_price},
+                   units             = ${info.units || null},
+                   reconciled_at     = now()
+             WHERE id = ${t.id}
+          `;
+          await recordEntry(env);
+          summary.resolved_executed.push(t.id);
+        } else if (info.statusID === 2) {
+          await sql`
+            UPDATE trades
+               SET status        = 'cancelled',
+                   closed_at     = now(),
+                   exit_reason   = 'expired',
+                   reconciled_at = now()
+             WHERE id = ${t.id}
+          `;
+          summary.resolved_cancelled.push(`${t.id} (statusID=2 cancelled)`);
         } else {
-          summary.errors.push(`${t.id}: unknown statusID ${info.statusID}`);
+          // statusID 0/11 or other ambiguous — still pending
+          summary.still_pending.push(t.id);
         }
         continue;
       }

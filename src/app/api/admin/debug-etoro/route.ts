@@ -94,6 +94,42 @@ export async function GET(req: NextRequest) {
   const lookupOrderIds = req.nextUrl.searchParams.get("lookupOrders");
   const abandonTradeId = req.nextUrl.searchParams.get("abandonTrade");
   const listTradesLimit = req.nextUrl.searchParams.get("listTrades");
+  const relinkTrade = req.nextUrl.searchParams.get("relinkTrade"); // tradeId,positionId
+
+  // Re-link a wrongly-cancelled trade to its actual eToro position.
+  // Used to recover from the statusID=3 misinterpretation bug.
+  if (relinkTrade) {
+    const [tradeId, positionId] = relinkTrade.split(",");
+    if (!tradeId || !positionId) {
+      return NextResponse.json({ error: "format: tradeId,positionId" }, { status: 400 });
+    }
+    const { db } = await import("@/lib/neon");
+    const sql = db();
+    const rows = (await sql`
+      UPDATE trades
+         SET status            = 'open',
+             etoro_position_id = ${positionId},
+             closed_at         = NULL,
+             exit_reason       = NULL,
+             reconciled_at     = now()
+       WHERE id = ${tradeId}
+       RETURNING id, environment, asset, etoro_position_id
+    `) as unknown as { id: string; environment: "paper" | "real"; asset: string; etoro_position_id: string }[];
+    if (rows.length > 0) {
+      await sql`
+        UPDATE guardrail_state gs
+           SET open_position_count = (
+             SELECT COUNT(*)::int FROM trades
+              WHERE environment = gs.environment
+                AND status = 'open'
+                AND etoro_position_id IS NOT NULL AND etoro_position_id <> ''
+           )
+         WHERE environment = ${rows[0].environment}
+      `;
+      return NextResponse.json({ ok: true, relinked: rows[0] });
+    }
+    return NextResponse.json({ ok: false, message: "Trade not found" });
+  }
 
   // Dump latest N trades from DB regardless of status
   if (listTradesLimit) {
