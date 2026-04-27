@@ -401,13 +401,14 @@ export async function handleToolCall(
            WHERE id = ${t.id}
         `;
         // Log a 'modify' decision
+        const cleanReasoning = sanitizeReasoning(input.reasoning);
         await sql`
           INSERT INTO agent_decisions (
             environment, agent_kind, decision_type, asset, reasoning, outcome_status, trade_id
           ) VALUES (
             ${ctx.environment}, ${ctx.overrides?.agentKind || 'strategic'},
             'modify', ${t.asset},
-            ${`PARTIAL CLOSE ${(fraction * 100).toFixed(0)}% (${unitsToClose} units, ${remaining} remaining): ${input.reasoning}`},
+            ${`PARTIAL CLOSE ${(fraction * 100).toFixed(0)}% (${unitsToClose} units, ${remaining} remaining): ${cleanReasoning}`},
             'executed', ${t.id}
           )
         `;

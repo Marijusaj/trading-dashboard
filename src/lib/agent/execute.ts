@@ -129,10 +129,10 @@ export async function openTrade(req: OpenTradeRequest): Promise<OpenTradeResult>
   if (!gate.allowed) {
     const decRows = await sql`
       INSERT INTO agent_decisions (
-        environment, decision_type, asset, reasoning, hvf_score, conviction,
+        environment, agent_kind, decision_type, asset, reasoning, hvf_score, conviction,
         outcome_status, guardrail_violation, raw_context
       ) VALUES (
-        ${req.env}, 'open', ${req.asset}, ${req.reasoning},
+        ${req.env}, ${req.agentKind || 'strategic'}, 'open', ${req.asset}, ${req.reasoning},
         ${req.hvfScore}, ${req.conviction}, 'skipped_guardrail',
         ${gate.violation}, ${JSON.stringify({ proposed, details: gate.details })}::jsonb
       )
@@ -333,7 +333,7 @@ export async function closeTrade(req: CloseTradeRequest): Promise<{ ok: boolean;
   const sql = db();
   const trades = await sql`
     SELECT id, etoro_position_id, environment, entry_price, size_usd,
-           side, instrument_id, stop_loss, take_profit
+           side, instrument_id, stop_loss, take_profit, asset, agent_kind
       FROM trades
      WHERE id = ${req.tradeId} AND status = 'open'
   ` as unknown as Array<{
@@ -346,6 +346,8 @@ export async function closeTrade(req: CloseTradeRequest): Promise<{ ok: boolean;
     instrument_id: number;
     stop_loss: number;
     take_profit: number;
+    asset: string;
+    agent_kind: AgentKind;
   }>;
 
   if (trades.length === 0) return { ok: false, message: "Trade not found or already closed" };
@@ -392,14 +394,15 @@ export async function closeTrade(req: CloseTradeRequest): Promise<{ ok: boolean;
      WHERE id = ${req.tradeId}
   `;
 
-  // Record decision
+  // Record decision — preserve agent_kind from the originating trade
+  // so a tactical-opened position closing does NOT show as 'strategic'.
   await sql`
     INSERT INTO agent_decisions (
-      environment, decision_type, asset, reasoning,
+      environment, agent_kind, decision_type, asset, reasoning,
       outcome_status, trade_id
     ) VALUES (
-      ${req.env}, 'close', NULL, ${sanitizeReasoning(req.reasoning)},
-      'executed', ${req.tradeId}
+      ${req.env}, ${trade.agent_kind || 'strategic'}, 'close', ${trade.asset},
+      ${sanitizeReasoning(req.reasoning)}, 'executed', ${req.tradeId}
     )
   `;
 
