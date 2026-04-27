@@ -23,6 +23,30 @@ export interface AgentToolContext {
   };
 }
 
+/**
+ * Extract a clean symbol from possibly-noisy `topAsset` input.
+ * Haiku occasionally stuffs commentary in: "DOGE (40.3 HVF, rejected)".
+ * Strategy: pull the first 1-6 char uppercase token; if it matches an
+ * allowed universe symbol, return that — else return null (better to
+ * lose a label than to pollute analytics with prose).
+ */
+function extractSymbol(raw: unknown, universe?: UniverseEntry[]): string | null {
+  if (!raw || typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  // Quick path: clean ticker already (2-6 upper chars)
+  if (/^[A-Z][A-Z0-9]{1,5}$/.test(trimmed)) return trimmed;
+  // Pull first 2-6 char uppercase run; isolated single capital letters
+  // (sentence starts) are deliberately ignored.
+  const m = trimmed.match(/\b[A-Z][A-Z0-9]{1,5}\b/);
+  if (!m) return null;
+  const sym = m[0];
+  if (universe && universe.length > 0) {
+    return universe.some((u) => u.symbol === sym) ? sym : null;
+  }
+  return sym;
+}
+
 // ── Tool schemas (sent to Claude) ───────────────────────────────────
 
 export const TOOL_DEFS: Anthropic.Tool[] = [
@@ -176,7 +200,12 @@ export const TOOL_DEFS: Anthropic.Tool[] = [
       type: "object",
       properties: {
         reasoning: { type: "string", description: "Summary of what you observed and why no action / what action" },
-        topAsset: { type: "string", description: "Highest-conviction asset this scan, even if not traded" },
+        topAsset: {
+          type: "string",
+          description:
+            "Highest-conviction asset this scan — SYMBOL ONLY, e.g. 'AVAX' or 'LINK'. " +
+            "Must be plain symbol with no parens, parentheticals, scores, or commentary.",
+        },
         hvfScore: { type: "number" },
       },
       required: ["reasoning"],
@@ -481,9 +510,13 @@ export async function handleToolCall(
     }
 
     case "record_observation": {
+      // Extract just the symbol from topAsset — Haiku sometimes stuffs
+      // commentary in (e.g. "DOGE (40.3 HVF, but rejected on threshold)")
+      // which pollutes per-asset analytics.
+      const cleanAsset = extractSymbol(input.topAsset, ctx.overrides?.universe);
       const id = await recordObservationDecision(ctx.environment, {
         decisionType: "scan_only",
-        asset: input.topAsset || null,
+        asset: cleanAsset,
         reasoning: input.reasoning,
         hvfScore: input.hvfScore ?? null,
         conviction: null,
