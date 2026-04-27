@@ -391,9 +391,12 @@ export const etoro = {
         // The chunk request failed — ONE bad ID inside takes the whole
         // batch down. Fall back to per-ID requests so the rest of the
         // chunk's instruments still get their rates.
-        const errMsg = e instanceof Error ? e.message : String(e);
-        console.warn(`rates chunk failed ids=[${chunk.join(",")}] env=${env} err=${errMsg} — falling back to per-ID`);
+        // (Don't warn yet — most of the time the per-ID retries succeed
+        // for every ID and the chunk failure is just an eToro batch quirk
+        // for certain ID combinations. Only warn if per-ID also fails.)
+        const chunkErr = e instanceof Error ? e.message : String(e);
         const failed: number[] = [];
+        let recovered = 0;
         for (const id of chunk) {
           try {
             const single = await request<RatesResponse>(env, "/market-data/instruments/rates", {
@@ -407,14 +410,19 @@ export const etoro = {
                 close: r.lastExecution,
                 ts: r.date,
               });
+              recovered++;
             }
           } catch {
             failed.push(id);
           }
         }
         if (failed.length > 0) {
-          console.warn(`rates per-ID fallback also failed ids=[${failed.join(",")}] env=${env}`);
+          // Real data loss — surface for investigation
+          console.warn(`rates: dropped ids=[${failed.join(",")}] env=${env} (chunk err: ${chunkErr}; per-ID also failed)`);
         }
+        // chunk-fail-but-per-ID-recovered case is silent — eToro batch
+        // quirk that the fallback fully handles.
+        void recovered;
       }
     }
     return results;
