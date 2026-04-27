@@ -513,12 +513,19 @@ export async function handleToolCall(
       // Extract just the symbol from topAsset — Haiku sometimes stuffs
       // commentary in (e.g. "DOGE (40.3 HVF, but rejected on threshold)")
       // which pollutes per-asset analytics.
-      const cleanAsset = extractSymbol(input.topAsset, ctx.overrides?.universe);
+      // If Haiku omits topAsset entirely (~17% of calls observed),
+      // fall back to the highest-HVF symbol from the latest scan.
+      const cleanAsset =
+        extractSymbol(input.topAsset, ctx.overrides?.universe) ??
+        ctx.scanCache?.[0]?.symbol ??
+        null;
+      // Same fallback for hvfScore if missing.
+      const hvfScore = input.hvfScore ?? ctx.scanCache?.[0]?.hvf?.score ?? null;
       const id = await recordObservationDecision(ctx.environment, {
         decisionType: "scan_only",
         asset: cleanAsset,
         reasoning: input.reasoning,
-        hvfScore: input.hvfScore ?? null,
+        hvfScore,
         conviction: null,
         agentKind: ctx.overrides?.agentKind,
       });
