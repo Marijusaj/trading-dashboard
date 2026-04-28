@@ -416,8 +416,22 @@ export async function handleToolCall(
       if (rows.length === 0) return { error: "Trade not found or not open" };
       const t = rows[0];
       if (!t.etoro_position_id) return { error: "Trade has no eToro position ID — pending order" };
-      const totalUnits = Number(t.units);
-      if (!totalUnits || totalUnits <= 0) return { error: "Trade has unknown unit count, cannot partial close" };
+      let totalUnits = Number(t.units);
+      // Fallback: if DB column is null/0 (e.g. trade was recovered via
+      // ?relinkTrade after a reconciler bug), fetch units live from
+      // eToro portfolio + persist back to DB so future partials are fast.
+      if (!totalUnits || totalUnits <= 0) {
+        try {
+          const portfolio = await etoro.getPortfolio(ctx.environment);
+          const livePos = portfolio.positions.find((p) => String(p.positionID) === t.etoro_position_id);
+          const liveUnits = Number(livePos?.units ?? 0);
+          if (liveUnits > 0) {
+            totalUnits = liveUnits;
+            await sql`UPDATE trades SET units = ${liveUnits} WHERE id = ${t.id}`;
+          }
+        } catch { /* ignore, fall through to error */ }
+      }
+      if (!totalUnits || totalUnits <= 0) return { error: "Trade has unknown unit count, cannot partial close (eToro position not found in portfolio)" };
       const unitsToClose = Number((totalUnits * fraction).toFixed(6));
       try {
         await etoro.closePosition(ctx.environment, t.etoro_position_id, Number(t.instrument_id), unitsToClose);

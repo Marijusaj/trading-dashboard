@@ -97,6 +97,35 @@ export async function GET(req: NextRequest) {
   const relinkTrade = req.nextUrl.searchParams.get("relinkTrade"); // tradeId,positionId
   const inspectDecisionId = req.nextUrl.searchParams.get("inspectDecision");
   const forceClosePosId = req.nextUrl.searchParams.get("forceClose"); // env=paper&forceClose=positionId,instrumentId
+  const backfillUnitsTradeId = req.nextUrl.searchParams.get("backfillUnits"); // ?backfillUnits=tradeId — fetch units from eToro and write to DB
+
+  // Backfill the `units` column from eToro live portfolio. Use when a
+  // trade was recovered via ?relinkTrade and partial-close subsequently
+  // fails with "unknown unit count".
+  if (backfillUnitsTradeId) {
+    const { db } = await import("@/lib/neon");
+    const { etoro } = await import("@/lib/etoro/client");
+    const sql = db();
+    const trows = (await sql`
+      SELECT id, etoro_position_id, environment, asset
+        FROM trades
+       WHERE id = ${backfillUnitsTradeId} AND status = 'open'
+    `) as unknown as { id: string; etoro_position_id: string; environment: "paper" | "real"; asset: string }[];
+    if (trows.length === 0) return NextResponse.json({ ok: false, error: "Trade not found or not open" });
+    const t = trows[0];
+    if (!t.etoro_position_id) return NextResponse.json({ ok: false, error: "Trade has no etoro_position_id" });
+    try {
+      const portfolio = await etoro.getPortfolio(t.environment);
+      const livePos = portfolio.positions.find((p) => String(p.positionID) === t.etoro_position_id);
+      if (!livePos) return NextResponse.json({ ok: false, error: "Position not found in eToro portfolio (closed?)" });
+      const liveUnits = Number(livePos.units || 0);
+      if (liveUnits <= 0) return NextResponse.json({ ok: false, error: "eToro returned 0 units for position" });
+      await sql`UPDATE trades SET units = ${liveUnits} WHERE id = ${t.id}`;
+      return NextResponse.json({ ok: true, tradeId: t.id, asset: t.asset, units: liveUnits });
+    } catch (e) {
+      return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, { status: 500 });
+    }
+  }
   const cleanReasoning = req.nextUrl.searchParams.get("cleanReasoning"); // ?cleanReasoning=1 — backfill bad rows
 
   // One-shot: re-sanitize any agent_decisions / agent_memory rows whose
@@ -239,7 +268,19 @@ export async function GET(req: NextRequest) {
            )
          WHERE environment = ${rows[0].environment}
       `;
-      return NextResponse.json({ ok: true, relinked: rows[0] });
+      // Also fetch + persist units from eToro so partial-close works
+      // out of the box for the restored trade.
+      let unitsBackfilled: number | null = null;
+      try {
+        const { etoro } = await import("@/lib/etoro/client");
+        const portfolio = await etoro.getPortfolio(rows[0].environment);
+        const livePos = portfolio.positions.find((p) => String(p.positionID) === positionId);
+        if (livePos && livePos.units && Number(livePos.units) > 0) {
+          unitsBackfilled = Number(livePos.units);
+          await sql`UPDATE trades SET units = ${unitsBackfilled} WHERE id = ${tradeId}`;
+        }
+      } catch { /* non-fatal */ }
+      return NextResponse.json({ ok: true, relinked: rows[0], unitsBackfilled });
     }
     return NextResponse.json({ ok: false, message: "Trade not found" });
   }

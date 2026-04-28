@@ -37,6 +37,7 @@ interface PendingTradeRow {
   stop_loss: number | string;
   take_profit: number | string;
   opened_at: string;
+  units: number | string | null;
 }
 
 export interface ReconcileSummary {
@@ -67,7 +68,7 @@ export async function reconcileEnv(env: AgentEnvironment): Promise<ReconcileSumm
   // 1. Pull all open trades for this environment
   const trades = (await sql`
     SELECT id, environment, etoro_order_id, etoro_position_id, asset, instrument_id,
-           side, entry_price, size_usd, stop_loss, take_profit, opened_at
+           side, entry_price, size_usd, stop_loss, take_profit, opened_at, units
       FROM trades
      WHERE environment = ${env} AND status = 'open'
   `) as unknown as PendingTradeRow[];
@@ -75,13 +76,29 @@ export async function reconcileEnv(env: AgentEnvironment): Promise<ReconcileSumm
 
   if (trades.length === 0) return summary;
 
-  // 2. Snapshot eToro portfolio once for cross-checks
+  // 2. Snapshot eToro portfolio once for cross-checks + units backfill
   let portfolioPositionIds = new Set<string>();
+  let positionUnitsByID = new Map<string, number>();
   try {
     const portfolio = await etoro.getPortfolio(env);
     portfolioPositionIds = new Set(portfolio.positions.map((p) => String(p.positionID)));
+    positionUnitsByID = new Map(
+      portfolio.positions.map((p) => [String(p.positionID), Number(p.units || 0)]),
+    );
   } catch (e) {
     summary.errors.push(`portfolio fetch failed: ${e instanceof Error ? e.message : e}`);
+  }
+
+  // 2b. Self-heal: backfill `units` for any open trade missing it.
+  // Trades recovered via ?relinkTrade after the statusID=3 reconciler bug
+  // never got their units populated, which breaks close_position_partial.
+  for (const t of trades) {
+    if (t.etoro_position_id && (t.units === null || t.units === undefined || Number(t.units) === 0)) {
+      const live = positionUnitsByID.get(t.etoro_position_id);
+      if (live && live > 0) {
+        await sql`UPDATE trades SET units = ${live} WHERE id = ${t.id}`;
+      }
+    }
   }
 
   for (const t of trades) {
