@@ -264,17 +264,20 @@ export async function handleToolCall(
          ORDER BY opened_at DESC
       ` as unknown as Array<{ id: string; asset: string; side: string; entry_price: number; size_usd: number; stop_loss: number; take_profit: number; leverage: number; opened_at: string; etoro_position_id: string }>;
 
-      // Also surface OWN eToro positions opened outside the agent
-      // (manual trades the user placed). The agent should NOT close
-      // these, but should be aware when sizing new entries.
+      // Also surface any eToro positions NOT yet adopted into the trades
+      // table. These are positions opened outside the agent's lifecycle
+      // (manually placed before adoption ran). The user has indicated the
+      // agent should manage all positions — surface these as "unadopted"
+      // so the agent can request they be adopted (via admin) or evaluate
+      // them for closing on the next pass.
       const portfolio = await etoro.getPortfolio(ctx.environment);
       const agentPositionIds = new Set(agentTrades.map((t) => t.etoro_position_id).filter(Boolean));
-      const userManualPositions = portfolio.positions.filter(
+      const unadoptedPositions = portfolio.positions.filter(
         (p) => !agentPositionIds.has(p.positionID),
       );
       return {
         agentTrades,
-        userManualPositions: userManualPositions.map((p) => ({
+        unadoptedPositions: unadoptedPositions.map((p) => ({
           positionID: p.positionID,
           instrumentID: p.instrumentID,
           side: p.isBuy ? "long" : "short",
@@ -283,7 +286,10 @@ export async function handleToolCall(
           openDate: p.openDateTime,
           unrealizedPnL: p.netProfit,
         })),
-        note: "Agent should NOT close userManualPositions — those were opened by the human and are out of scope.",
+        note: "agentTrades are positions the agent owns and manages (close/modify allowed). " +
+              "unadoptedPositions are eToro positions not yet registered as trades; if you " +
+              "want to manage them, ask the user to run ?adoptAll=" + ctx.environment + " " +
+              "or ?adoptPosition=positionId — once adopted they become agentTrades.",
       };
     }
 

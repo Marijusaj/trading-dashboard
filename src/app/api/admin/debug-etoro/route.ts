@@ -98,6 +98,106 @@ export async function GET(req: NextRequest) {
   const inspectDecisionId = req.nextUrl.searchParams.get("inspectDecision");
   const forceClosePosId = req.nextUrl.searchParams.get("forceClose"); // env=paper&forceClose=positionId,instrumentId
   const backfillUnitsTradeId = req.nextUrl.searchParams.get("backfillUnits"); // ?backfillUnits=tradeId — fetch units from eToro and write to DB
+  const adoptAll = req.nextUrl.searchParams.get("adoptAll"); // ?adoptAll=paper — register all eToro positions in trades table
+
+  // Adopt all positions from eToro into the trades table so the agent's
+  // reconciler/auto-manager treats them as its own. Use when the user wants
+  // the agent to manage manually-opened positions.
+  //
+  // For each position not already tracked in `trades`, inserts a row with:
+  //   - entry_price = position.openRate (real history)
+  //   - units, size_usd from eToro
+  //   - SL = max(eToro SL, current_price * 0.5) for longs (50% drawdown stop)
+  //         min(eToro SL, current_price * 1.5) for shorts
+  //   - TP = eToro TP if set, else current_price * 2 for longs, * 0.5 for shorts
+  //   - asset = "INST_<id>" placeholder (real symbol can be backfilled)
+  //   - opened_at = position.openDateTime (preserves real age)
+  //   - agent_kind = 'strategic' (long-term hold, daily HVF appropriate)
+  //
+  // Idempotent: skips positions whose etoro_position_id is already in trades.
+  if (adoptAll) {
+    const targetEnv = (adoptAll === "real" ? "real" : "paper") as "paper" | "real";
+    const { db } = await import("@/lib/neon");
+    const { etoro } = await import("@/lib/etoro/client");
+    const { randomUUID } = await import("node:crypto");
+    const sql = db();
+    try {
+      const portfolio = await etoro.getPortfolio(targetEnv);
+      const existing = (await sql`
+        SELECT etoro_position_id FROM trades
+         WHERE environment = ${targetEnv}
+           AND etoro_position_id IS NOT NULL AND etoro_position_id <> ''
+      `) as unknown as { etoro_position_id: string }[];
+      const known = new Set(existing.map((r) => r.etoro_position_id));
+
+      // Live rates for SL/TP defaulting
+      const instIds = [...new Set(portfolio.positions.map((p) => p.instrumentID))];
+      const rates = instIds.length > 0 ? await etoro.getRates(instIds, targetEnv) : [];
+      const rateMap = new Map(rates.map((r) => [r.instrumentID, (r.bid + r.ask) / 2]));
+
+      const adopted: Array<{ positionID: string; instrumentID: number; side: string; entry: number; size: number; sl: number; tp: number }> = [];
+      const skipped: string[] = [];
+      for (const p of portfolio.positions) {
+        const posId = String(p.positionID);
+        if (known.has(posId)) { skipped.push(posId); continue; }
+        const side = p.isBuy ? "long" : "short";
+        const entry = Number(p.openRate);
+        const size = Number(p.amountInDollars || 0);
+        const units = Number(p.units || 0);
+        const mid = rateMap.get(p.instrumentID) ?? entry;
+        // Default SL/TP (only used if eToro values are absent or trivial)
+        const etoroSl = Number(p.stopLossRate || 0);
+        const etoroTp = Number(p.takeProfitRate || 0);
+        const sl = side === "long"
+          ? (etoroSl > 0.01 ? etoroSl : mid * 0.5)
+          : (etoroSl > 0 ? etoroSl : mid * 1.5);
+        const tp = side === "long"
+          ? (etoroTp > 0 ? etoroTp : mid * 2.0)
+          : (etoroTp > 0 ? etoroTp : mid * 0.5);
+        const decisionId = randomUUID();
+        await sql`
+          INSERT INTO agent_decisions (
+            id, environment, agent_kind, decision_type, asset, reasoning,
+            outcome_status
+          ) VALUES (
+            ${decisionId}, ${targetEnv}, 'strategic', 'open',
+            ${'INST_' + p.instrumentID},
+            ${`ADOPTED from existing eToro position ${posId} (instr ${p.instrumentID}, ${side}, entry ${entry}, size $${size}, opened ${p.openDateTime}). Agent will manage going forward.`},
+            'executed'
+          )
+        `;
+        await sql`
+          INSERT INTO trades (
+            decision_id, environment, agent_kind, etoro_position_id,
+            asset, instrument_id, side, entry_price, size_usd, units,
+            stop_loss, take_profit, leverage, opened_at, status
+          ) VALUES (
+            ${decisionId}, ${targetEnv}, 'strategic', ${posId},
+            ${'INST_' + p.instrumentID}, ${p.instrumentID}, ${side},
+            ${entry}, ${size}, ${units},
+            ${sl}, ${tp}, ${Number(p.leverage || 1)},
+            ${p.openDateTime}, 'open'
+          )
+        `;
+        adopted.push({ positionID: posId, instrumentID: p.instrumentID, side, entry, size, sl, tp });
+      }
+      // Refresh open_position_count
+      await sql`
+        UPDATE guardrail_state
+           SET open_position_count = (
+             SELECT COUNT(*)::int FROM trades
+              WHERE environment = ${targetEnv}
+                AND status = 'open'
+                AND etoro_position_id IS NOT NULL AND etoro_position_id <> ''
+           )
+         WHERE environment = ${targetEnv}
+      `;
+      return NextResponse.json({ ok: true, env: targetEnv, adopted, skipped });
+    } catch (e) {
+      return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, { status: 500 });
+    }
+  }
+
 
   // Backfill the `units` column from eToro live portfolio. Use when a
   // trade was recovered via ?relinkTrade and partial-close subsequently
