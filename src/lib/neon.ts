@@ -56,7 +56,11 @@ export function db(): ReturnType<typeof neon> {
 // Domain types — mirror schema in db/migrations/0001_init.sql
 // ────────────────────────────────────────────────────────────────────
 
-export type AgentEnvironment = "real" | "paper";
+export type AgentEnvironment = "real" | "paper" | "binance";
+// Note: 'binance' is allowed by the schema (migration 0004) and the admin
+// /api/admin/binance endpoint uses it. The strategic/tactical agent loops
+// only run on 'paper' or 'real' for now — Binance autonomous trading is
+// Phase 2 and will land in a separate change once Phase 1 is verified.
 
 export interface AgentDecisionRow {
   id: string;

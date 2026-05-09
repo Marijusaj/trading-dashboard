@@ -64,4 +64,11 @@ export const TACTICAL_LIMITS = {
     minRewardRiskRatio: 1.5,
     maxLeverage: 2,
   },
+  binance: {
+    // Defined for type-safety. Tactical loop doesn't run on Binance in
+    // Phase 1 — autonomous Binance trading is Phase 2.
+    maxPositionSizeUsd: 25,    // half of strategic Binance ($50)
+    minRewardRiskRatio: 1.5,
+    maxLeverage: 1,
+  },
 };

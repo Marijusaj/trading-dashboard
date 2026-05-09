@@ -2,10 +2,22 @@
 // https://api-portal.etoro.com/. Marked partial because the API
 // returns more fields than we use; we only type the ones we touch.
 
-export type EtoroEnv = "real" | "paper";
+// EtoroEnv historically was "real" | "paper". With the addition of
+// 'binance' to AgentEnvironment, eToro client functions now accept the
+// wider type and assert at runtime. This avoids cluttering 17+ call
+// sites with explicit narrowing — the assertion lives at the boundary.
+import type { AgentEnvironment } from "@/lib/neon";
+export type EtoroEnv = AgentEnvironment;
+
+function assertEtoro(env: EtoroEnv): void {
+  if (env === "binance") {
+    throw new Error(`eToro client called with env=binance — Binance trades route through @/lib/binance, not @/lib/etoro`);
+  }
+}
 
 /** Maps our env label to the URL segment eToro uses ("demo" for paper). */
 export function envToPath(env: EtoroEnv): "demo" | "real" {
+  assertEtoro(env);
   return env === "paper" ? "demo" : "real";
 }
 
@@ -21,6 +33,7 @@ export function envToPath(env: EtoroEnv): "demo" | "real" {
  * Use for placeMarketOrder, closePosition, cancelOrder paths.
  */
 export function envToExecPathSegment(env: EtoroEnv): "demo/" | "" {
+  assertEtoro(env);
   return env === "paper" ? "demo/" : "";
 }
 

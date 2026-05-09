@@ -36,6 +36,16 @@ export const LIMITS: Record<AgentEnvironment, GuardrailLimits> = {
     maxLeverage: 2,
     cooldownAfterConsecutiveLosses: 12,
   },
+  binance: {
+    // Spot USDC, long-only. Conservative initial sizing on a $500 USDC balance.
+    maxPositionSizeUsd: 50,           // 10% of $500 dry powder per trade
+    maxConcurrentPositions: 5,
+    maxDailyLossUsd: 30,              // 6% of $500
+    minMinutesBetweenEntries: 240,    // 4h
+    minRewardRiskRatio: 1.5,
+    maxLeverage: 1,                   // spot has no leverage
+    cooldownAfterConsecutiveLosses: 24,
+  },
 };
 
 export interface ProposedTrade {
