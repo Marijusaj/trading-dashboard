@@ -9,6 +9,21 @@ export function envToPath(env: EtoroEnv): "demo" | "real" {
   return env === "paper" ? "demo" : "real";
 }
 
+/**
+ * eToro execution endpoints have an asymmetric URL convention:
+ *   - Paper/demo: /trading/execution/demo/market-open-orders/by-amount
+ *   - Real:       /trading/execution/market-open-orders/by-amount  (no env segment)
+ *
+ * Info endpoints (/trading/info/{env}/pnl) accept both "demo" and "real",
+ * but execution endpoints return 404 RouteNotFound when "real" is included.
+ *
+ * Returns the segment INCLUDING the trailing slash, or empty string for real.
+ * Use for placeMarketOrder, closePosition, cancelOrder paths.
+ */
+export function envToExecPathSegment(env: EtoroEnv): "demo/" | "" {
+  return env === "paper" ? "demo/" : "";
+}
+
 export interface EtoroInstrument {
   instrumentID: number;
   internalSymbolFull: string;

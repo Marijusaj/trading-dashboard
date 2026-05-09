@@ -21,6 +21,7 @@ import {
   EtoroPosition,
   EtoroRate,
   envToPath,
+  envToExecPathSegment,
 } from "./types";
 
 const BASE_URL = "https://public-api.etoro.com/api/v1";
@@ -494,9 +495,11 @@ export const etoro = {
         units?: number;
       };
     }
+    // Real account: NO env segment in execution paths.
+    // Demo/paper: includes "demo/" segment. See envToExecPathSegment.
     const raw = await request<PlaceRaw>(
       env,
-      `/trading/execution/${envToPath(env)}/market-open-orders/by-amount`,
+      `/trading/execution/${envToExecPathSegment(env)}market-open-orders/by-amount`,
       { method: "POST", body },
     );
     const o = raw.orderForOpen || {};
@@ -552,7 +555,7 @@ export const etoro = {
   async cancelOpenOrder(env: EtoroEnv, orderId: string): Promise<{ token: string }> {
     const raw = await request<{ token?: string }>(
       env,
-      `/trading/execution/${envToPath(env)}/market-open-orders/${encodeURIComponent(orderId)}`,
+      `/trading/execution/${envToExecPathSegment(env)}market-open-orders/${encodeURIComponent(orderId)}`,
       { method: "DELETE" },
     );
     return { token: String(raw.token ?? "") };
@@ -635,7 +638,7 @@ export const etoro = {
     if (unitsToDeduct !== undefined) body.UnitsToDeduct = unitsToDeduct;
     const raw = await request<Record<string, unknown>>(
       env,
-      `/trading/execution/${envToPath(env)}/market-close-orders/positions/${encodeURIComponent(positionId)}`,
+      `/trading/execution/${envToExecPathSegment(env)}market-close-orders/positions/${encodeURIComponent(positionId)}`,
       { method: "POST", body },
     );
     return { positionID: String(raw.positionID ?? raw.PositionID ?? positionId) };

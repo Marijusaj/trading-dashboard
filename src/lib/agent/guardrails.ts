@@ -19,18 +19,18 @@ export interface GuardrailLimits {
 
 export const LIMITS: Record<AgentEnvironment, GuardrailLimits> = {
   real: {
-    maxPositionSizeUsd: 50,
+    maxPositionSizeUsd: 100,         // raised from $50 — user wants more capital deployed on Real
     maxConcurrentPositions: 3,
-    maxDailyLossUsd: 30,             // 6% of $500 starting capital
+    maxDailyLossUsd: 60,             // 6% of $1k effective ceiling
     minMinutesBetweenEntries: 240,   // 4h
     minRewardRiskRatio: 1.5,
     maxLeverage: 1,
     cooldownAfterConsecutiveLosses: 24,
   },
   paper: {
-    maxPositionSizeUsd: 5_000,
+    maxPositionSizeUsd: 15_000,      // raised from $5k — paper has $181k idle, deploy more
     maxConcurrentPositions: 8,
-    maxDailyLossUsd: 8_400,          // 6% of $140k
+    maxDailyLossUsd: 12_000,         // 6% of ~$200k equity
     minMinutesBetweenEntries: 240,
     minRewardRiskRatio: 1.5,
     maxLeverage: 2,

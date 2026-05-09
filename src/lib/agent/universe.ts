@@ -34,7 +34,7 @@ export const UNIVERSE: UniverseEntry[] = [
   { symbol: "BNB", display: "BNB", assetClass: "crypto", thesis: "Major exchange token, follows BTC", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },
   { symbol: "ADA", display: "Cardano", assetClass: "crypto", thesis: "Technically weak per Francis", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },
   { symbol: "DOGE", display: "Dogecoin", assetClass: "crypto", thesis: "High beta, Musk sentiment", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },
-  { symbol: "AVAX", display: "Avalanche", assetClass: "crypto", thesis: "L1 competitor", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },
+  { symbol: "AVAX", display: "Avalanche", assetClass: "crypto", thesis: "L1 competitor — SHORTS DISALLOWED on this eToro account (errorCode 747); long-only", shortAllowed: false, instrumentId: null, minSizeUsd: 10 },
   { symbol: "LINK", display: "Chainlink", assetClass: "crypto", thesis: "Oracle infrastructure", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },
 
   // ── Commodity CFDs (min $1000 due to leverage requirement) ─────

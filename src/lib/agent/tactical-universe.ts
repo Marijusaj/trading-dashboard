@@ -55,12 +55,12 @@ export const TACTICAL_UNIVERSE: UniverseEntry[] = [
 // Position sizing for tactical (smaller than strategic)
 export const TACTICAL_LIMITS = {
   real: {
-    maxPositionSizeUsd: 25,    // half of strategic Real ($50)
+    maxPositionSizeUsd: 50,    // half of strategic Real ($100)
     minRewardRiskRatio: 1.5,
     maxLeverage: 1,
   },
   paper: {
-    maxPositionSizeUsd: 1000,  // 20% of strategic Paper ($5000)
+    maxPositionSizeUsd: 3000,  // 20% of strategic Paper ($15000)
     minRewardRiskRatio: 1.5,
     maxLeverage: 2,
   },
