@@ -7,9 +7,10 @@ import { db } from "@/lib/neon";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-// Strategic cron is daily at 12:00 UTC. Throttle 22h to allow scheduled
-// runs but reject accidental hammering. Override with ?force=1.
-const STRATEGIC_THROTTLE_MINUTES = 22 * 60;
+// Strategic cron is daily at 12:00 UTC. Throttle 20h so the daily run
+// fires reliably even after schedule transitions or one-off force runs.
+// Override with ?force=1.
+const STRATEGIC_THROTTLE_MINUTES = 20 * 60;
 
 async function lastStrategicRunMinsAgo(env: "paper" | "real"): Promise<number | null> {
   const sql = db();
