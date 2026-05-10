@@ -50,6 +50,24 @@ export const TACTICAL_UNIVERSE: UniverseEntry[] = [
     instrumentId: null,
     minSizeUsd: 10,
   },
+  {
+    symbol: "TRX",
+    display: "Tron",
+    assetClass: "crypto",
+    thesis: "Stablecoin rail bull thesis — $0.33 breakout watch. Covered on 15m so tactical catches breakouts before strategic's daily scan.",
+    shortAllowed: true,
+    instrumentId: null,
+    minSizeUsd: 10,
+  },
+  {
+    symbol: "XRP",
+    display: "Ripple",
+    assetClass: "crypto",
+    thesis: "High-volume mid-cap, frequent 15m setups, broken support sub-$1 target",
+    shortAllowed: true,
+    instrumentId: null,
+    minSizeUsd: 10,
+  },
 ];
 
 // Position sizing for tactical (smaller than strategic)

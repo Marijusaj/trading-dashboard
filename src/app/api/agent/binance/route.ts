@@ -7,9 +7,9 @@ import { db } from "@/lib/neon";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-// Cron is every 6h. Throttle 5h to allow scheduled runs but reject
-// accidental hammering. Override with ?force=1.
-const BINANCE_THROTTLE_MINUTES = 5 * 60;
+// Cron is daily at 12:00 UTC. Throttle 22h to allow scheduled runs but
+// reject accidental hammering. Override with ?force=1.
+const BINANCE_THROTTLE_MINUTES = 22 * 60;
 
 async function lastBinanceRunMinsAgo(): Promise<number | null> {
   const sql = db();

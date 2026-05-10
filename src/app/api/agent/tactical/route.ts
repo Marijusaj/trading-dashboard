@@ -8,9 +8,10 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 // Throttle: skip a tactical run if one happened for this env within
-// the last N minutes. Cron is */30 so 25min is the right cushion.
+// the last N minutes. Cron is every 2h so 110min is the right cushion
+// (allows scheduled runs but blocks accidental hammering).
 // Override with ?force=1 (e.g. for manual debugging).
-const TACTICAL_THROTTLE_MINUTES = 25;
+const TACTICAL_THROTTLE_MINUTES = 110;
 
 async function lastTacticalRunMinsAgo(env: "paper" | "real"): Promise<number | null> {
   const sql = db();
