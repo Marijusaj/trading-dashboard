@@ -261,12 +261,17 @@ export async function checkGuardrails(trade: ProposedTrade): Promise<GuardrailRe
 }
 
 /** Minimum SL distance (% from entry) eToro will respect WITHOUT widening.
- *  Empirically observed — refine as we discover more cases. */
+ *  Padded ~0.5pp above the documented eToro minimums because the broker
+ *  has been observed silently pushing stops up an extra 5-15% (e.g.
+ *  agent submits 5.10% on crypto short → eToro widens to 5.97% → R:R
+ *  degrades and post-trade verification auto-closes the trade).
+ *  The extra buffer means agent-submitted SLs land inside the
+ *  "no-widening" zone, which keeps trades alive. */
 const MIN_SL_DISTANCE_PCT: Record<string, { long: number; short: number }> = {
-  crypto:    { long: 1.0, short: 5.0 },  // Shorts especially restrictive
-  commodity: { long: 2.0, short: 2.0 },  // CFD margin-based
-  equity:    { long: 1.0, short: 1.0 },
-  etf:       { long: 1.0, short: 1.0 },
+  crypto:    { long: 1.5, short: 5.5 },  // shorts get widened most aggressively
+  commodity: { long: 2.5, short: 2.5 },  // CFD margin-based
+  equity:    { long: 1.5, short: 1.5 },
+  etf:       { long: 1.5, short: 1.5 },
 };
 
 // ────────────────────────────────────────────────────────────────────
