@@ -68,6 +68,13 @@ export const TACTICAL_UNIVERSE: UniverseEntry[] = [
     instrumentId: null,
     minSizeUsd: 10,
   },
+
+  // ── Tactical expansion (May 2026) — high-vol mid-caps for 15m HVF ──
+  { symbol: "DOT",  display: "Polkadot",   assetClass: "crypto", thesis: "L0 mid-cap, frequent intraday swings", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },
+  { symbol: "ATOM", display: "Cosmos",     assetClass: "crypto", thesis: "Interchain narrative, sharp 15m moves", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },
+  { symbol: "NEAR", display: "Near",       assetClass: "crypto", thesis: "AI-narrative L1, high 15m volatility", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },
+  { symbol: "INJ",  display: "Injective",  assetClass: "crypto", thesis: "DeFi/AI infra, very high beta on 15m", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },
+  { symbol: "SUI",  display: "Sui",        assetClass: "crypto", thesis: "Newer L1, clean 15m HVF patterns", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },
 ];
 
 // Position sizing for tactical (smaller than strategic)

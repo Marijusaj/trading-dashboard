@@ -45,6 +45,31 @@ export const UNIVERSE: UniverseEntry[] = [
   { symbol: "MSTR", display: "Strategy Inc", assetClass: "equity", thesis: "Levered BTC exposure (Saylor)", shortAllowed: true, instrumentId: null, minSizeUsd: 50 },
   { symbol: "COIN", display: "Coinbase", assetClass: "equity", thesis: "Crypto exchange beta", shortAllowed: true, instrumentId: null, minSizeUsd: 50 },
   { symbol: "GLD", display: "SPDR Gold ETF", assetClass: "etf", thesis: "Gold ETF for accounts without futures access", shortAllowed: true, instrumentId: null, minSizeUsd: 50 },
+
+  // ── Expansion (May 2026) — wider net to find HVF setups when the core 15 are dead ──
+
+  // Additional crypto majors / mid-caps (long-only candidates with strong narratives)
+  { symbol: "DOT",   display: "Polkadot",   assetClass: "crypto", thesis: "Parachain ecosystem, mid-cap L0, mean-reversion candidate", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },
+  { symbol: "ATOM",  display: "Cosmos",     assetClass: "crypto", thesis: "IBC ecosystem, interchain narrative", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },
+  { symbol: "NEAR",  display: "Near",       assetClass: "crypto", thesis: "Sharded L1, AI agent thesis", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },
+  { symbol: "INJ",   display: "Injective",  assetClass: "crypto", thesis: "DeFi/AI infra, high-beta", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },
+  { symbol: "SUI",   display: "Sui",        assetClass: "crypto", thesis: "New L1, high-vol clean charts", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },
+
+  // Tech equities — AI/semi/mega-cap (Francis-adjacent debasement-tech thesis)
+  { symbol: "NVDA",  display: "Nvidia",     assetClass: "equity", thesis: "AI/semi leader, macro-bellwether for tech", shortAllowed: true, instrumentId: null, minSizeUsd: 50 },
+  { symbol: "TSLA",  display: "Tesla",      assetClass: "equity", thesis: "High-beta growth, Musk sentiment proxy", shortAllowed: true, instrumentId: null, minSizeUsd: 50 },
+  { symbol: "AAPL",  display: "Apple",      assetClass: "equity", thesis: "Mega-cap defensive tech", shortAllowed: true, instrumentId: null, minSizeUsd: 50 },
+  { symbol: "MSFT",  display: "Microsoft",  assetClass: "equity", thesis: "Mega-cap cloud + AI", shortAllowed: true, instrumentId: null, minSizeUsd: 50 },
+  { symbol: "AMD",   display: "AMD",        assetClass: "equity", thesis: "Semi #2, AI catch-up trade", shortAllowed: true, instrumentId: null, minSizeUsd: 50 },
+
+  // PM miners + silver ETF (Francis debasement bull thesis play)
+  { symbol: "NEM",   display: "Newmont",    assetClass: "equity", thesis: "Largest gold miner, debasement bull leverage", shortAllowed: true, instrumentId: null, minSizeUsd: 50 },
+  { symbol: "WPM",   display: "Wheaton PM", assetClass: "equity", thesis: "Streaming model, lower-vol PM exposure", shortAllowed: true, instrumentId: null, minSizeUsd: 50 },
+  { symbol: "SLV",   display: "iShares Silver ETF", assetClass: "etf", thesis: "Silver ETF for accounts without CFD access", shortAllowed: true, instrumentId: null, minSizeUsd: 50 },
+
+  // Broad ETFs (macro tape)
+  { symbol: "SPY",   display: "S&P 500 ETF", assetClass: "etf", thesis: "Broad US tape, Francis macro context", shortAllowed: true, instrumentId: null, minSizeUsd: 50 },
+  { symbol: "QQQ",   display: "Nasdaq 100 ETF", assetClass: "etf", thesis: "Tech beta, AI macro exposure", shortAllowed: true, instrumentId: null, minSizeUsd: 50 },
 ];
 
 export function getUniverseSymbols(): string[] {

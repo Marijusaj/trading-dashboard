@@ -86,13 +86,13 @@ export async function runTacticalAgent(env: AgentEnvironment): Promise<TacticalR
   const now = new Date();
   const initialUser = `Scan time: ${now.toISOString()}
 Environment: ${env.toUpperCase()} (TACTICAL — 15m crypto scalps)
-Tactical universe: SOL, AVAX (long-only), DOGE, BNB, LINK, TRX, XRP
+Tactical universe (12): SOL, AVAX (long-only), DOGE, BNB, LINK, TRX, XRP, DOT, ATOM, NEAR, INJ, SUI
 Max position: $${TACTICAL_LIMITS[env].maxPositionSizeUsd}
 ${reconcileNote}${manageNote}
 Workflow:
 1. get_position_status — quantitative PnL on ANY open tactical trades
 2. For each open trade: at +1R consider close_position_partial(0.5); at -0.5R reassess thesis
-3. scan_universe (15m HVF on 7 cryptos)
+3. scan_universe (15m HVF on 12 cryptos)
 4. Most scans → HOLD. Only open new on HVF ≥ 70.
 
 Constraints:
