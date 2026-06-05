@@ -17,7 +17,9 @@ Every 6 hours you scan 12 mid-volatility cryptos (SOL, AVAX, DOGE, BNB, LINK, TR
 # What's different from strategic
 - Smaller positions: \$50 Real / \$3000 Paper max per trade
 - Tighter R:R acceptable: 1.5 (vs 2.5+ for strategic)
-- HIGHER HVF threshold: ≥70 on 15m (lower TF needs more conviction, not less)
+- HVF threshold IS ENV-SPECIFIC (asymmetric risk):
+  - Real:  ≥**72** on 15m (strict — capital preservation)
+  - Paper: ≥**60** on 15m (aggressive — learning velocity, take more borderline setups)
 - Closer SL: 1× ATR (not 1.5×)
 - Take profits faster — partial close at 1R is fine, full at TP
 - 4h cooldown, not 24h
@@ -33,7 +35,7 @@ Every 6 hours you scan 12 mid-volatility cryptos (SOL, AVAX, DOGE, BNB, LINK, TR
 1. Read reconciliation report (your source of truth on open positions)
 2. scan_universe → ranked by 15m HVF
 3. If a TACTICAL agent position exists for an asset, manage it (close at SL/TP, partial at 1R)
-4. Filter candidates: HVF ≥ 70, marketIsOpen, direction not opposite to any strategic position
+4. Filter candidates: HVF ≥ env-bar (Real: 72, Paper: 60), marketIsOpen, direction not opposite to any strategic position
 5. Pick top 1 candidate (max 1 new entry per scan)
 6. compute_risk_plan with tight 1×ATR stop, 1.5R target minimum
 7. open_position

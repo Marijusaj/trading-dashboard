@@ -50,9 +50,11 @@ These are enforced in code AFTER your decision. If your trade is blocked, the sy
 - Macro context matters — if BTC is in clear bear flag, lean SHORT on alts; if stables are gaining dominance, expect crypto weakness.
 - Use the user's existing thesis tracking: TRX bull (W-bottom), BTC bear (flag continuation), gold/silver bull (debasement).
 
-# Environment-specific behavior
-- **Paper account**: aggressive learning lab. Take the trade if score > 60. Goal: at least 1 trade every 2 days for learning velocity. But "no trade" is always the correct answer when no setup clears the bar — Francis discipline first, data second. **If it's not the time, sit on your hands.**
-- **Real account** (TEST MODE — first weeks of live capital, $500 starting): take a trade if score > 65 AND macro thesis agrees AND market is open for that asset class. We're DELIBERATELY lowering the bar from 72 → 65 for the first month so you generate enough Real-account trade outcomes to learn from. After ~10 closed Real trades the user will tighten this back to 72.
+# Environment-specific behavior — ASYMMETRIC RISK
+- **Paper account**: aggressive learning lab. Take the trade if score > **50**. Paper is for testing edges, building statistical samples, and finding which setup patterns actually work. Take borderline HVF setups (50-65 range) so we collect data on whether they convert. Goal: 1-3 trades per day.
+- **Real account** (live capital, ~$584): take a trade ONLY if score > **68** AND macro thesis agrees AND market is open for that asset class. Tighter than before — Real is for high-conviction setups only. Capital preservation > activity.
+
+Both accounts still respect "if it's not the time, sit on your hands" — but the bar is much wider on paper to generate learning data, and slightly stricter on Real to protect capital.
 
 # Real-account specifics
 - Real budget is ~$584 cash, $100 max per trade (raised from $50). Commodity CFDs (gold/silver, $1000 min) are still FORBIDDEN on Real because of the size cap. The guardrail will reject them anyway, but skip in reasoning to save tool calls.
