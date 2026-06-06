@@ -1,11 +1,19 @@
 // Universe scanner — runs HVF analysis across all instruments in
 // the curated universe. Returns ranked candidates for the LLM to
 // reason about.
+//
+// Multi-strategy mode (opts.strategies): when provided, the scanner runs
+// every strategy in addition to HVF for each universe entry. Results are
+// returned in `strategyCandidates` on each ScanCandidate. HVF is always
+// kept as the canonical top-level fields (score, direction, components)
+// so legacy code paths (real env, tactical) keep working.
 import { etoro } from "@/lib/etoro/client";
 import { db } from "@/lib/neon";
 import { analyzeHVF, type HVFAnalysis, type OHLC } from "./hvf";
 import { UNIVERSE, type UniverseEntry } from "./universe";
 import { checkMarketHours, type AssetClass } from "./market-hours";
+import type { Strategy, StrategyCandidate, StrategyContext } from "./strategies/types";
+import { BROKER_MIN_SL_PCT } from "./strategies/types";
 
 export interface ScanCandidate {
   symbol: string;
@@ -18,6 +26,10 @@ export interface ScanCandidate {
   hvf: HVFAnalysis;
   marketIsOpen: boolean;
   marketHoursReason: string;
+  /** Populated when opts.strategies is provided. Contains the result of
+   *  each strategy (null entries are filtered out). HVF appears here too
+   *  if it's in the strategies list, with its own normalized shape. */
+  strategyCandidates?: StrategyCandidate[];
 }
 
 /** Resolve symbol → instrumentId via the Neon cache populated by
@@ -77,6 +89,10 @@ export interface ScanOptions {
   timeframe?: keyof typeof TIMEFRAME_TO_ETORO;
   /** Number of candles to fetch */
   candleCount?: number;
+  /** When provided, each strategy is also run per asset and results are
+   *  attached as `strategyCandidates`. Pass [] to skip extra strategies
+   *  (default: undefined = HVF only via the legacy path). */
+  strategies?: Strategy[];
 }
 
 /**
@@ -105,6 +121,32 @@ export async function scanUniverse(opts: ScanOptions = {}): Promise<ScanCandidat
       const currentPrice = rate ? (rate.bid + rate.ask) / 2 : candles[candles.length - 1].close;
       const hours = checkMarketHours(entry.assetClass as AssetClass);
 
+      // Multi-strategy mode: run every provided strategy in addition to HVF.
+      // Short-banned assets cannot produce short candidates regardless of
+      // strategy verdict — filter those out here.
+      let strategyCandidates: StrategyCandidate[] | undefined;
+      if (opts.strategies && opts.strategies.length > 0) {
+        const ac = (entry.assetClass as AssetClass) || "crypto";
+        const ctx: StrategyContext = {
+          symbol: entry.symbol,
+          candles,
+          currentPrice,
+          assetClass: ac,
+          brokerMinSlPct: BROKER_MIN_SL_PCT[ac] ?? BROKER_MIN_SL_PCT.crypto,
+        };
+        strategyCandidates = opts.strategies
+          .map((strat) => {
+            try {
+              return strat(ctx);
+            } catch (e) {
+              console.error(`[scanner] strategy threw for ${entry.symbol}:`, e);
+              return null;
+            }
+          })
+          .filter((c): c is StrategyCandidate => c !== null)
+          .filter((c) => c.direction !== "short" || entry.shortAllowed);
+      }
+
       return {
         symbol: entry.symbol,
         instrumentId,
@@ -116,6 +158,7 @@ export async function scanUniverse(opts: ScanOptions = {}): Promise<ScanCandidat
         hvf,
         marketIsOpen: hours.isOpen,
         marketHoursReason: hours.reason,
+        strategyCandidates,
       };
     } catch (e) {
       console.error(`Scan failed for ${entry.symbol}:`, e);

@@ -11,6 +11,7 @@ import { db } from "@/lib/neon";
 import { etoro } from "@/lib/etoro/client";
 import { checkGuardrails, recordEntry, recordClose, type ProposedTrade } from "./guardrails";
 import type { AgentEnvironment } from "@/lib/neon";
+import type { StrategyName } from "./strategies/types";
 
 export type AgentKind = "strategic" | "tactical";
 
@@ -94,6 +95,10 @@ export interface OpenTradeRequest {
   agentKind?: AgentKind;
   /** Override max position size for this trade (tactical takes smaller positions) */
   positionSizeOverride?: number;
+  /** Which strategy triggered this trade. Defaults to 'hvf'. Persisted to
+   *  both agent_decisions.strategy and trades.strategy for per-strategy
+   *  PnL analytics. */
+  strategy?: StrategyName;
 }
 
 export interface OpenTradeResult {
@@ -111,6 +116,7 @@ export async function openTrade(req: OpenTradeRequest): Promise<OpenTradeResult>
   // (guardrail-blocked, pending, executed, rejected) gets clean text.
   req = { ...req, reasoning: sanitizeReasoning(req.reasoning) };
   const sql = db();
+  const strategy: StrategyName = req.strategy || "hvf";
   const proposed: ProposedTrade = {
     environment: req.env,
     asset: req.asset,
@@ -130,11 +136,11 @@ export async function openTrade(req: OpenTradeRequest): Promise<OpenTradeResult>
     const decRows = await sql`
       INSERT INTO agent_decisions (
         environment, agent_kind, decision_type, asset, reasoning, hvf_score, conviction,
-        outcome_status, guardrail_violation, raw_context
+        outcome_status, guardrail_violation, raw_context, strategy
       ) VALUES (
         ${req.env}, ${req.agentKind || 'strategic'}, 'open', ${req.asset}, ${req.reasoning},
         ${req.hvfScore}, ${req.conviction}, 'skipped_guardrail',
-        ${gate.violation}, ${JSON.stringify({ proposed, details: gate.details })}::jsonb
+        ${gate.violation}, ${JSON.stringify({ proposed, details: gate.details })}::jsonb, ${strategy}
       )
       RETURNING id
     ` as unknown as { id: string }[];
@@ -152,11 +158,11 @@ export async function openTrade(req: OpenTradeRequest): Promise<OpenTradeResult>
   const decRows = await sql`
     INSERT INTO agent_decisions (
       environment, agent_kind, decision_type, asset, reasoning,
-      hvf_score, conviction, outcome_status, raw_context
+      hvf_score, conviction, outcome_status, raw_context, strategy
     ) VALUES (
       ${req.env}, ${req.agentKind || 'strategic'}, 'open', ${req.asset},
       ${req.reasoning}, ${req.hvfScore}, ${req.conviction}, 'pending',
-      ${JSON.stringify({ proposed: req, details: gate.details })}::jsonb
+      ${JSON.stringify({ proposed: req, details: gate.details })}::jsonb, ${strategy}
     )
     RETURNING id
   ` as unknown as { id: string }[];
@@ -210,13 +216,13 @@ export async function openTrade(req: OpenTradeRequest): Promise<OpenTradeResult>
       INSERT INTO trades (
         decision_id, environment, agent_kind, etoro_position_id, etoro_order_id,
         asset, instrument_id, side, entry_price, size_usd, units,
-        stop_loss, take_profit, leverage, status
+        stop_loss, take_profit, leverage, status, strategy
       ) VALUES (
         ${decisionId}, ${req.env}, ${req.agentKind || 'strategic'},
         ${etoroPositionId || null}, ${placement.orderID || null},
         ${req.asset}, ${req.instrumentId}, ${req.direction},
         ${openRate}, ${req.sizeUsd}, ${units},
-        ${req.stopLoss}, ${req.takeProfit}, ${req.leverage}, ${tradeStatus}
+        ${req.stopLoss}, ${req.takeProfit}, ${req.leverage}, ${tradeStatus}, ${strategy}
       )
       RETURNING id
     ` as unknown as { id: string }[];

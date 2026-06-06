@@ -8,6 +8,7 @@ import { planRisk, analyzeHVF, type OHLC } from "./hvf";
 import { openTrade, closeTrade, recordObservationDecision, sanitizeReasoning, type OpenTradeRequest, type AgentKind } from "./execute";
 import type { UniverseEntry } from "./universe";
 import type { AgentEnvironment } from "@/lib/neon";
+import type { Strategy, StrategyName } from "./strategies/types";
 
 export interface AgentToolContext {
   environment: AgentEnvironment;
@@ -20,6 +21,10 @@ export interface AgentToolContext {
     agentKind?: AgentKind;
     /** Cap the position size the agent can request (tactical: $25 Real / $1000 Paper) */
     maxPositionSizeUsd?: number;
+    /** Multi-strategy mode — when set, the scanner runs every strategy
+     *  and surfaces results in `scan_universe` output. The agent then
+     *  picks a strategy by name in open_position. */
+    strategies?: Strategy[];
   };
 }
 
@@ -53,7 +58,11 @@ export const TOOL_DEFS: Anthropic.Tool[] = [
   {
     name: "scan_universe",
     description:
-      "Scan the curated universe (top 15 instruments) and return HVF analysis for each, ranked by score. Returns price, HVF score breakdown, signals, and risk metrics.",
+      "Scan the curated universe and return per-asset analysis. " +
+      "Always returns HVF score + components. In multi-strategy mode (paper / binance) ALSO returns " +
+      "`strategyCandidates`: a list of entries from every enabled strategy (hvf, trend_break, mean_revert, hvf_mtf). " +
+      "Each strategy has its OWN scoring scale — do not compare scores across strategies. " +
+      "Pick the strategy whose setup most clearly fits the asset's current price action.",
     input_schema: {
       type: "object",
       properties: {},
@@ -120,7 +129,9 @@ export const TOOL_DEFS: Anthropic.Tool[] = [
   {
     name: "open_position",
     description:
-      "Open a new position on eToro. Will be blocked if it violates guardrails (size, leverage, cooldown, R:R, etc). Returns the result including any guardrail rejection reason.",
+      "Open a new position on eToro. Will be blocked if it violates guardrails (size, leverage, cooldown, R:R, etc). Returns the result including any guardrail rejection reason. " +
+      "Pass `strategy` to label the trade with the strategy that triggered it — required when scan_universe surfaced strategyCandidates. " +
+      "Defaults to 'hvf' if omitted (legacy real-env path).",
     input_schema: {
       type: "object",
       properties: {
@@ -131,8 +142,14 @@ export const TOOL_DEFS: Anthropic.Tool[] = [
         stopLoss: { type: "number" },
         takeProfit: { type: "number" },
         reasoning: { type: "string", description: "1-3 sentence rationale; will be persisted" },
-        hvfScore: { type: "number" },
+        hvfScore: { type: "number", description: "Strategy score (0-100). Field is named hvfScore for backward compat but accepts any strategy's score." },
         conviction: { type: "string", enum: ["high", "medium", "low"] },
+        strategy: {
+          type: "string",
+          enum: ["hvf", "trend_break", "mean_revert", "hvf_mtf"],
+          description:
+            "Which strategy triggered this trade. Required in multi-strategy envs (paper, binance). Defaults to 'hvf'.",
+        },
       },
       required: ["symbol", "direction", "sizeUsd", "leverage", "stopLoss", "takeProfit", "reasoning", "hvfScore", "conviction"],
     },
@@ -226,6 +243,7 @@ export async function handleToolCall(
       const results = await scanUniverse({
         universe: ctx.overrides?.universe,
         timeframe: ctx.overrides?.timeframe,
+        strategies: ctx.overrides?.strategies,
       });
       ctx.scanCache = results;
       return results.map((c) => ({
@@ -251,6 +269,22 @@ export async function handleToolCall(
         shortAllowed: c.shortAllowed,
         marketIsOpen: c.marketIsOpen,
         marketHoursReason: c.marketHoursReason,
+        // Multi-strategy mode: surface every strategy's verdict. The agent
+        // should pick the one that best fits the price action — not just
+        // the highest-scoring one (scores aren't comparable across
+        // strategies).
+        strategyCandidates: c.strategyCandidates?.map((s) => ({
+          strategy: s.strategy,
+          direction: s.direction,
+          score: s.score,
+          conviction: s.conviction,
+          reason: s.reason,
+          signals: s.signals,
+          entryPrice: s.entryPrice,
+          suggestedSL: s.suggestedSL,
+          suggestedTP: s.suggestedTP,
+          rewardRiskRatio: s.rewardRiskRatio,
+        })),
       }));
     }
 
@@ -392,6 +426,16 @@ export async function handleToolCall(
         ? Math.min(input.sizeUsd, maxOverride)
         : input.sizeUsd;
 
+      // Strategy label. Default to 'hvf' for backward compat. Reject
+      // unknown strategy names rather than silently coerce.
+      const VALID_STRATS: ReadonlySet<StrategyName> = new Set([
+        "hvf", "trend_break", "mean_revert", "hvf_mtf",
+      ]);
+      const strategy: StrategyName =
+        input.strategy && VALID_STRATS.has(input.strategy as StrategyName)
+          ? (input.strategy as StrategyName)
+          : "hvf";
+
       const req: OpenTradeRequest = {
         env: ctx.environment,
         asset: input.symbol,
@@ -408,6 +452,7 @@ export async function handleToolCall(
         minSizeUsd: uEntry?.minSizeUsd,
         assetClass: uEntry?.assetClass,
         agentKind: ctx.overrides?.agentKind,
+        strategy,
       };
       const result = await openTrade(req);
       return result;

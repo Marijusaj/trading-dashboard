@@ -6,6 +6,7 @@ import { TOOL_DEFS, handleToolCall, type AgentToolContext } from "./tools";
 import { isKillswitchActive } from "./guardrails";
 import { reconcileEnv } from "./reconcile";
 import { autoManageOpenPositions } from "./manage";
+import { strategiesFor, strategyNamesFor } from "./strategies";
 import type { AgentEnvironment } from "@/lib/neon";
 
 const MODEL = "claude-opus-4-7";              // Smartest model, 1M ctx
@@ -42,7 +43,15 @@ export async function runAgent(env: AgentEnvironment): Promise<AgentRunSummary> 
   }
 
   const anthropic = new Anthropic({ apiKey });
-  const ctx: AgentToolContext = { environment: env, scanCache: null };
+  // Paper env = creative learning lab → multi-strategy mode.
+  // Real env = Francis discipline → HVF only.
+  // Per-env strategy gating is centralized in strategies/index.ts.
+  const enabledStrategies = strategiesFor(env === "real" ? "real" : "paper");
+  const ctx: AgentToolContext = {
+    environment: env,
+    scanCache: null,
+    overrides: env === "real" ? undefined : { strategies: enabledStrategies },
+  };
 
   // ── Reconcile pending/closed trades BEFORE asking the model anything ──
   let reconcileNote = "";
@@ -76,8 +85,15 @@ export async function runAgent(env: AgentEnvironment): Promise<AgentRunSummary> 
   }
 
   const now = new Date();
+  const strategyLineup =
+    env === "real"
+      ? `Strategies enabled: HVF only (real-money discipline).`
+      : `Strategies enabled: ${strategyNamesFor("paper").join(", ")}. ` +
+        `scan_universe will return strategyCandidates per asset — pick the strategy that best fits the price action ` +
+        `and pass it to open_position. Scores are NOT comparable across strategies.`;
   const initialUser = `Scan time: ${now.toISOString()}
-Environment: ${env.toUpperCase()} ${env === "real" ? "(LIVE CAPITAL — be conservative)" : "(PAPER — be active and learn)"}
+Environment: ${env.toUpperCase()} ${env === "real" ? "(LIVE CAPITAL — be conservative)" : "(PAPER — creative learning lab, multi-strategy)"}
+${strategyLineup}
 ${reconcileNote}${manageNote}
 Run your scan + decision loop now. Start by calling scan_universe, get_open_positions, and get_position_status in parallel, then reason about what to do.
 
