@@ -353,14 +353,26 @@ export async function handleToolCall(
       if (!cand) {
         return { error: `Symbol ${input.symbol} not in latest scan. Call scan_universe first.` };
       }
+      // Broker minimum stop pct — eToro silently widens crypto stops <5.5%
+      // (shorts especially), kills R:R. planRisk pads outward to this.
+      // Same table as guardrails.ts MIN_SL_DISTANCE_PCT.
+      const minStopMap: Record<string, { long: number; short: number }> = {
+        crypto:    { long: 1.5, short: 5.5 },
+        commodity: { long: 2.5, short: 2.5 },
+        equity:    { long: 1.5, short: 1.5 },
+        etf:       { long: 1.5, short: 1.5 },
+      };
+      const ac = cand.assetClass as keyof typeof minStopMap;
+      const minStopPct = minStopMap[ac]?.[input.direction as "long" | "short"] ?? 1.5;
       const plan = planRisk({
         entryPrice: input.entryPrice,
         direction: input.direction,
         atr: cand.hvf.metrics.currentATR,
         recentLow: cand.hvf.metrics.recentLow,
         recentHigh: cand.hvf.metrics.recentHigh,
+        minStopPct,
       });
-      return plan;
+      return { ...plan, minStopPctApplied: minStopPct };
     }
 
     case "open_position": {

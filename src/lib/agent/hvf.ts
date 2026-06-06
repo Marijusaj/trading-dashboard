@@ -256,6 +256,10 @@ export interface RiskParams {
   minRR?: number;
   /** Multiplier on ATR for stop placement. Defaults to 1.5. */
   atrStopMultiplier?: number;
+  /** Broker minimum stop distance as % of entry. If set, SL is padded
+   *  outward to at least this distance (prevents guardrail/broker-widening
+   *  from killing setups). E.g. 5.5 for crypto shorts on eToro. */
+  minStopPct?: number;
 }
 
 export interface RiskPlan {
@@ -270,6 +274,10 @@ export function planRisk(p: RiskParams): RiskPlan {
   const { entryPrice, direction, atr: atrVal, recentLow, recentHigh } = p;
   const minRR = p.minRR ?? 1.5;
   const atrMult = p.atrStopMultiplier ?? 1.5;
+  // Broker minimum stop distance as % of entry. If provided, SL will be
+  // padded out to at least this distance — preventing the guardrail
+  // (and eToro's silent widening) from killing otherwise-good HVF setups.
+  const minStopPct = p.minStopPct;
 
   let stopLoss: number;
   let takeProfit: number;
@@ -279,12 +287,22 @@ export function planRisk(p: RiskParams): RiskPlan {
     const atrStop = entryPrice - atrVal * atrMult;
     const pivotStop = recentLow * 0.995;
     stopLoss = Math.max(atrStop, pivotStop); // tighter (closer to entry) is max
+    // Pad outward to broker minimum if specified
+    if (minStopPct !== undefined) {
+      const brokerMinSl = entryPrice * (1 - minStopPct / 100);
+      stopLoss = Math.min(stopLoss, brokerMinSl);  // wider (further from entry) is min
+    }
     const risk = entryPrice - stopLoss;
     takeProfit = Math.max(recentHigh * 1.005, entryPrice + risk * minRR);
   } else {
     const atrStop = entryPrice + atrVal * atrMult;
     const pivotStop = recentHigh * 1.005;
     stopLoss = Math.min(atrStop, pivotStop);
+    // Pad outward to broker minimum if specified
+    if (minStopPct !== undefined) {
+      const brokerMinSl = entryPrice * (1 + minStopPct / 100);
+      stopLoss = Math.max(stopLoss, brokerMinSl);  // wider (further from entry) is max for shorts
+    }
     const risk = stopLoss - entryPrice;
     takeProfit = Math.min(recentLow * 0.995, entryPrice - risk * minRR);
   }

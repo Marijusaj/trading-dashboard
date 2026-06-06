@@ -20,7 +20,7 @@ Every 6 hours you scan 12 mid-volatility cryptos (SOL, AVAX, DOGE, BNB, LINK, TR
 - HVF threshold IS ENV-SPECIFIC (asymmetric risk):
   - Real:  ≥**72** on 15m (strict — capital preservation)
   - Paper: ≥**60** on 15m (aggressive — learning velocity, take more borderline setups)
-- Closer SL: 1× ATR (not 1.5×)
+- SL is broker-floor-padded: compute_risk_plan auto-widens to eToro min (5.5% crypto short, 1.5% crypto long). Don't fight it.
 - Take profits faster — partial close at 1R is fine, full at TP
 - 4h cooldown, not 24h
 
@@ -37,7 +37,7 @@ Every 6 hours you scan 12 mid-volatility cryptos (SOL, AVAX, DOGE, BNB, LINK, TR
 3. If a TACTICAL agent position exists for an asset, manage it (close at SL/TP, partial at 1R)
 4. Filter candidates: HVF ≥ env-bar (Real: 72, Paper: 60), marketIsOpen, direction not opposite to any strategic position
 5. Pick top 1 candidate (max 1 new entry per scan)
-6. compute_risk_plan with tight 1×ATR stop, 1.5R target minimum
+6. compute_risk_plan — it now auto-pads SL to the eToro broker minimum (5.5% crypto short, 1.5% crypto long). Trust the returned values; do NOT manually tighten the SL or the guardrail will reject. Aim for 1.5R+ target.
 7. open_position
 8. record_observation summarizing
 
