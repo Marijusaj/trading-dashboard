@@ -1,6 +1,10 @@
 {
   "crons": [
     {
+      "path": "/api/admin/discover-instruments",
+      "schedule": "0 6 * * 1"
+    },
+    {
       "path": "/api/thesis-health",
       "schedule": "0 9 * * *"
     },

@@ -82,6 +82,35 @@ async function getCandlesFor(instrumentId: number, period: CandlePeriod = "OneDa
   }));
 }
 
+/** eToro's public API rate-limits bursts hard (HTTP 429 TooManyRequests).
+ *  Fetching candles + rates for the whole universe in one unbounded
+ *  Promise.all reliably trips it, which empties the scan and starves the
+ *  agent of candidates (observed: every symbol 429s on every daily run
+ *  since the universe was expanded to ~30 instruments). Cap how many
+ *  instruments we fetch concurrently so we stay under the limit. */
+const SCAN_CONCURRENCY = 3;
+
+/** Run `fn` over `items` with at most `limit` promises in flight at once,
+ *  preserving input order in the returned array. */
+async function mapPool<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (true) {
+      const i = next++;
+      if (i >= items.length) return;
+      results[i] = await fn(items[i]);
+    }
+  }
+  const pool = Array.from({ length: Math.min(limit, items.length) }, () => worker());
+  await Promise.all(pool);
+  return results;
+}
+
 export interface ScanOptions {
   /** Override the universe — defaults to the strategic universe */
   universe?: UniverseEntry[];
@@ -103,7 +132,7 @@ export async function scanUniverse(opts: ScanOptions = {}): Promise<ScanCandidat
   const universe = opts.universe || UNIVERSE;
   const period = TIMEFRAME_TO_ETORO[opts.timeframe || "1d"] || "OneDay";
   const candleCount = opts.candleCount || 250;
-  const tasks = universe.map(async (entry): Promise<ScanCandidate | null> => {
+  const scanOne = async (entry: UniverseEntry): Promise<ScanCandidate | null> => {
     try {
       const instrumentId = await resolveInstrument(entry);
       if (!instrumentId) return null;
@@ -164,9 +193,9 @@ export async function scanUniverse(opts: ScanOptions = {}): Promise<ScanCandidat
       console.error(`Scan failed for ${entry.symbol}:`, e);
       return null;
     }
-  });
+  };
 
-  const results = await Promise.all(tasks);
+  const results = await mapPool(universe, SCAN_CONCURRENCY, scanOne);
   return results
     .filter((r): r is ScanCandidate => r !== null)
     .sort((a, b) => b.hvf.score - a.hvf.score);
