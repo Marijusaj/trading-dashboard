@@ -1,10 +1,15 @@
-// One-shot endpoint: paginate eToro /market-data/instruments,
-// resolve our universe symbols to their instrument IDs, and write
-// the cache to the Neon `instruments` table.
+// Paginate eToro /market-data/instruments, resolve our universe symbols
+// to their instrument IDs, and write the cache to the Neon `instruments`
+// table. The scanner reads this cache to turn universe symbols into
+// tradable instrument IDs — if it's empty, every scan returns zero
+// candidates and the agent can never open a position.
 //
-// Run with:
-//   curl -X POST -H "Authorization: Bearer $CRON_SECRET" \
-//     https://<domain>/api/admin/discover-instruments
+// Exposed on BOTH verbs:
+//   - GET  — invoked by the weekly Vercel cron (crons issue GET requests).
+//            Vercel auto-attaches `Authorization: Bearer $CRON_SECRET`.
+//   - POST — manual/on-demand refresh:
+//              curl -X POST -H "Authorization: Bearer $CRON_SECRET" \
+//                https://<domain>/api/admin/discover-instruments
 //
 // Idempotent — uses ON CONFLICT DO UPDATE.
 import { NextRequest, NextResponse } from "next/server";
@@ -65,7 +70,7 @@ function matchesUniverse(meta: InstrumentMeta, universeSymbol: string): boolean 
   return false;
 }
 
-export async function POST(req: NextRequest) {
+async function discoverAndCache(req: NextRequest): Promise<NextResponse> {
   const auth = req.headers.get("authorization");
   if (!process.env.CRON_SECRET || auth !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -172,4 +177,15 @@ export async function POST(req: NextRequest) {
       { status: 500 },
     );
   }
+}
+
+// GET — weekly Vercel cron entrypoint (see vercel.json). Vercel cron
+// invocations are GET requests carrying the CRON_SECRET bearer token.
+export async function GET(req: NextRequest) {
+  return discoverAndCache(req);
+}
+
+// POST — manual/on-demand refresh with the same auth + behavior.
+export async function POST(req: NextRequest) {
+  return discoverAndCache(req);
 }
