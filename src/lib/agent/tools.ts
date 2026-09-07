@@ -264,6 +264,7 @@ export async function handleToolCall(
           recentHigh: c.hvf.metrics.recentHigh,
           distanceToSupport: c.hvf.metrics.distanceToSupport,
           distanceToResistance: c.hvf.metrics.distanceToResistance,
+          volumeDataAvailable: c.hvf.metrics.volumeDataAvailable,
         },
         signals: c.hvf.signals,
         shortAllowed: c.shortAllowed,
@@ -623,6 +624,7 @@ export async function getInstrumentCandles(instrumentId: number): Promise<OHLC[]
     high: c.high,
     low: c.low,
     close: c.close,
+    volume: c.volume ?? undefined,
   }));
 }
 

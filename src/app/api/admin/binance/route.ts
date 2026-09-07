@@ -68,6 +68,7 @@ export async function GET(req: NextRequest) {
         const ohlc = klines.map((k) => ({
           time: Math.floor(k.openTime / 1000),
           open: k.open, high: k.high, low: k.low, close: k.close,
+          volume: k.volume,
         }));
         const hvf = analyzeHVF(ohlc);
         const lastClose = klines[klines.length - 1]?.close;

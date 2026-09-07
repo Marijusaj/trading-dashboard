@@ -41,6 +41,7 @@ export async function scanBinanceUniverse(
         high: k.high,
         low: k.low,
         close: k.close,
+        volume: k.volume,
       }));
       const hvf = analyzeHVF(ohlc);
       if (!hvf) return null;

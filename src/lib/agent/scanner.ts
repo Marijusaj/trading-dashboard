@@ -79,6 +79,7 @@ async function getCandlesFor(instrumentId: number, period: CandlePeriod = "OneDa
     high: c.high,
     low: c.low,
     close: c.close,
+    volume: c.volume ?? undefined,
   }));
 }
 

@@ -48,6 +48,11 @@ export interface HVFAnalysis {
     recentHigh: number;
     distanceToSupport: number;  // %
     distanceToResistance: number; // %
+    /** False when the candle series carried no usable volume, in which
+     *  case volumeContraction is the neutral 7.5 rather than a real
+     *  measurement. Surfaced so a low score can be told apart from a
+     *  blind one. */
+    volumeDataAvailable: boolean;
   };
   signals: string[];            // human-readable narrative bullets
 }
@@ -145,17 +150,29 @@ export function analyzeHVF(candles: OHLC[]): HVFAnalysis | null {
   const funnelStructure = funnelConvergence * 25;
 
   // ── Volume contraction ─────────────────────────────────────────
-  let volumeContraction = 0;
-  if (volumes.some((v) => v > 0)) {
-    const recentVol = volumes.slice(-10).reduce((s, v) => s + v, 0) / 10;
-    const historicVol = volumes.slice(-40, -10).reduce((s, v) => s + v, 0) / 30;
-    if (historicVol > 0) {
-      const ratio = recentVol / historicVol;
-      // Score: 15 if recent < 60% of historic; 0 if >= 100%
-      volumeContraction = Math.max(0, Math.min(15, (1 - ratio) * 37.5));
-    }
+  // Scored ONLY when both comparison windows are fully populated. A
+  // partially-populated series (eToro returns null volume for some
+  // instruments/timeframes) is the dangerous case: if the recent window
+  // is missing but the historic one isn't, ratio → 0 and this leg reads
+  // as "volume collapsed" = full 15/15, manufacturing a squeeze signal
+  // out of a data gap. Neutral 7.5 is the honest answer there.
+  const recentVols = volumes.slice(-10);
+  const historicVols = volumes.slice(-40, -10);
+  const volumeDataAvailable =
+    recentVols.length === 10 &&
+    historicVols.length === 30 &&
+    recentVols.every((v) => v > 0) &&
+    historicVols.every((v) => v > 0);
+
+  let volumeContraction: number;
+  if (volumeDataAvailable) {
+    const recentVol = recentVols.reduce((s, v) => s + v, 0) / 10;
+    const historicVol = historicVols.reduce((s, v) => s + v, 0) / 30;
+    const ratio = recentVol / historicVol;
+    // Score: 15 if recent < 60% of historic; 0 if >= 100%
+    volumeContraction = Math.max(0, Math.min(15, (1 - ratio) * 37.5));
   } else {
-    // No volume data — give it a neutral 7.5
+    // No usable volume data — neutral 7.5, neither reward nor penalty.
     volumeContraction = 7.5;
   }
 
@@ -205,8 +222,11 @@ export function analyzeHVF(candles: OHLC[]): HVFAnalysis | null {
   if (isConverging) {
     signals.push(`Funnel: highs descending ${(upperTrendlineSlope * 100).toFixed(2)}%/bar, lows ascending ${(lowerTrendlineSlope * 100).toFixed(2)}%/bar`);
   }
-  if (volumeContraction > 8 && volumes.some((v) => v > 0)) {
+  if (volumeDataAvailable && volumeContraction > 8) {
     signals.push(`Volume contracted into squeeze`);
+  }
+  if (!volumeDataAvailable) {
+    signals.push(`No volume data for this series — volume leg scored neutral (7.5/15)`);
   }
   if (bullStack) signals.push(`Bullish EMA stack (price > 20 > 50 > 200)`);
   if (bearStack) signals.push(`Bearish EMA stack (price < 20 < 50 < 200)`);
@@ -237,6 +257,7 @@ export function analyzeHVF(candles: OHLC[]): HVFAnalysis | null {
       recentHigh: Number(recentHigh.toFixed(6)),
       distanceToSupport: Number(distanceToSupport.toFixed(2)),
       distanceToResistance: Number(distanceToResistance.toFixed(2)),
+      volumeDataAvailable,
     },
     signals,
   };
