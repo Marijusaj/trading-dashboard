@@ -5,6 +5,7 @@ import { BINANCE_TOOL_DEFS, handleBinanceToolCall, type BinanceToolContext } fro
 import { isKillswitchActive } from "./guardrails";
 import { reconcileBinance } from "./binance-reconcile";
 import { autoManageBinancePositions } from "./binance-manage";
+import { strategiesFor, strategyNamesFor } from "./strategies";
 
 const MODEL = "claude-opus-4-7";
 const MAX_TOKENS = 8000;
@@ -43,7 +44,13 @@ export async function runBinanceAgent(): Promise<BinanceRunSummary> {
   }
 
   const anthropic = new Anthropic({ apiKey });
-  const ctx: BinanceToolContext = { scanCache: null };
+  // strategies/index.ts is the source of truth. Binance declares the full
+  // suite there; the loop previously never passed it, so scans silently
+  // ran HVF-only.
+  const ctx: BinanceToolContext = {
+    scanCache: null,
+    strategies: strategiesFor("binance"),
+  };
 
   // Reconcile + auto-manage before reasoning
   let reconcileNote = "";
@@ -74,6 +81,7 @@ export async function runBinanceAgent(): Promise<BinanceRunSummary> {
   const now = new Date();
   const initialUser = `Scan time: ${now.toISOString()}
 Account: BINANCE SPOT (live USDC, EU MiCA-compliant, long-only)
+Strategies enabled: ${strategyNamesFor("binance").join(", ")}. scan_universe returns strategyCandidates per asset — pick the strategy whose setup fits the price action and pass its name to open_position. Scores are NOT comparable across strategies. Short candidates are filtered out already (spot is long-only).
 ${reconcileNote}${manageNote}
 Run your scan + decision loop now. Start by calling scan_universe, get_open_positions, and get_account_equity in parallel, then reason about what to do.
 

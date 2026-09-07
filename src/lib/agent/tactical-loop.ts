@@ -4,6 +4,7 @@ import { TACTICAL_PROMPT } from "./tactical-prompt";
 import { TACTICAL_UNIVERSE, TACTICAL_LIMITS } from "./tactical-universe";
 import { TOOL_DEFS, handleToolCall, type AgentToolContext } from "./tools";
 import { isKillswitchActive } from "./guardrails";
+import { strategiesFor, strategyNamesFor } from "./strategies";
 import { reconcileEnv } from "./reconcile";
 import { autoManageOpenPositions } from "./manage";
 import type { AgentEnvironment } from "@/lib/neon";
@@ -53,6 +54,12 @@ export async function runTacticalAgent(env: AgentEnvironment): Promise<TacticalR
       timeframe: "15m",
       agentKind: "tactical",
       maxPositionSizeUsd: TACTICAL_LIMITS[env].maxPositionSizeUsd,
+      // strategies/index.ts is the single source of truth for which
+      // strategies an environment runs. Tactical previously omitted this,
+      // so it silently ran HVF-only in BOTH envs regardless of what the
+      // registry declared. Real still resolves to ["hvf"] via the
+      // registry — that gating lives there, not here.
+      strategies: strategiesFor(env === "real" ? "real" : "paper"),
     },
   };
 
@@ -84,16 +91,23 @@ export async function runTacticalAgent(env: AgentEnvironment): Promise<TacticalR
   }
 
   const now = new Date();
+  const strategyLineup =
+    env === "real"
+      ? `Strategies enabled: HVF only (real-money discipline).`
+      : `Strategies enabled: ${strategyNamesFor("paper").join(", ")}. ` +
+        `scan_universe returns strategyCandidates per asset — pick the strategy that best fits the ` +
+        `price action and pass its name to open_position. Scores are NOT comparable across strategies.`;
   const initialUser = `Scan time: ${now.toISOString()}
 Environment: ${env.toUpperCase()} (TACTICAL — 15m crypto scalps)
+${strategyLineup}
 Tactical universe (12): SOL, AVAX (long-only), DOGE, BNB, LINK, TRX, XRP, DOT, ATOM, NEAR, INJ, SUI
 Max position: $${TACTICAL_LIMITS[env].maxPositionSizeUsd}
 ${reconcileNote}${manageNote}
 Workflow:
 1. get_position_status — quantitative PnL on ANY open tactical trades
 2. For each open trade: at +1R consider close_position_partial(0.5); at -0.5R reassess thesis
-3. scan_universe (15m HVF on 12 cryptos)
-4. Most scans → HOLD. Only open new on HVF ≥ 70.
+3. scan_universe (15m, 12 cryptos)
+4. Most scans → HOLD. Only open when a strategy clears its env bar.
 
 Constraints:
 - Crypto SHORTS need SL ≥ 5% from entry (eToro min). Tight stops get widened, destroying R:R.
