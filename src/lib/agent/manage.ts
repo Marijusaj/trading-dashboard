@@ -78,6 +78,7 @@ export async function autoManageOpenPositions(
         high: c.high,
         low: c.low,
         close: c.close,
+        volume: c.volume ?? undefined,
       }));
       const hvf = candles.length >= 60 ? analyzeHVF(candles) : null;
 

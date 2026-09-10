@@ -454,6 +454,7 @@ export const etoro = {
         high: c.high,
         low: c.low,
         close: c.close,
+        volume: c.volume,
       }));
   },
 

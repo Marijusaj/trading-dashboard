@@ -54,6 +54,7 @@ export async function autoManageBinancePositions(): Promise<BinanceManageReport>
       const ohlc = klines.map((k) => ({
         time: Math.floor(k.openTime / 1000),
         open: k.open, high: k.high, low: k.low, close: k.close,
+        volume: k.volume,
       }));
       const hvf = ohlc.length >= 60 ? analyzeHVF(ohlc) : null;
 

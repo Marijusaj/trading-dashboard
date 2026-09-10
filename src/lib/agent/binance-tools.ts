@@ -11,17 +11,24 @@ import { scanBinanceUniverse } from "./binance-scanner";
 import { openBinanceTrade, closeBinanceTrade } from "./binance-execute";
 import { recordObservationDecision, sanitizeReasoning } from "./execute";
 import type { ScanCandidate } from "./scanner";
+import type { Strategy, StrategyName } from "./strategies/types";
 
 export interface BinanceToolContext {
   /** Cache of universe scan results for this run */
   scanCache: ScanCandidate[] | null;
+  /** Multi-strategy mode — when set, the scanner runs every strategy and
+   *  surfaces results in `scan_universe`. Supplied by the loop from
+   *  strategies/index.ts, which is the source of truth per environment. */
+  strategies?: Strategy[];
 }
 
 export const BINANCE_TOOL_DEFS: Anthropic.Tool[] = [
   {
     name: "scan_universe",
     description:
-      "Scan all universe symbols that have a Binance USDC pair. Returns HVF analysis on daily candles, ranked by score. Spot long-only — no shorts available on Binance.",
+      "Scan all universe symbols that have a Binance USDC pair. Returns HVF analysis on daily candles, ranked by score. Spot long-only — no shorts available on Binance. " +
+      "In multi-strategy mode ALSO returns `strategyCandidates`: verdicts from every enabled strategy (hvf, trend_break, mean_revert, hvf_mtf). " +
+      "Each strategy has its OWN scoring scale — do not compare scores across strategies. Pick the one whose setup fits the price action.",
     input_schema: { type: "object", properties: {}, required: [] },
   },
   {
@@ -65,8 +72,13 @@ export const BINANCE_TOOL_DEFS: Anthropic.Tool[] = [
         symbol: { type: "string", description: "Universe symbol (e.g. 'TRX' or 'BTC')" },
         sizeUsd: { type: "number", description: "USDC amount to spend" },
         reasoning: { type: "string" },
-        hvfScore: { type: "number" },
+        hvfScore: { type: "number", description: "Strategy score (0-100). Named hvfScore for backward compat but accepts any strategy's score." },
         conviction: { type: "string", enum: ["high", "medium", "low"] },
+        strategy: {
+          type: "string",
+          enum: ["hvf", "trend_break", "mean_revert", "hvf_mtf"],
+          description: "Which strategy triggered this trade. Required in multi-strategy mode. Defaults to 'hvf'.",
+        },
       },
       required: ["symbol", "sizeUsd", "reasoning", "hvfScore", "conviction"],
     },
@@ -134,7 +146,7 @@ export async function handleBinanceToolCall(
 ): Promise<unknown> {
   switch (toolName) {
     case "scan_universe": {
-      const results = await scanBinanceUniverse({});
+      const results = await scanBinanceUniverse({ strategies: ctx.strategies });
       ctx.scanCache = results;
       return results.map((c) => ({
         symbol: c.symbol,
@@ -144,7 +156,20 @@ export async function handleBinanceToolCall(
         hvfScore: c.hvf.score,
         direction: c.hvf.direction,
         components: c.hvf.components,
+        volumeDataAvailable: c.hvf.metrics.volumeDataAvailable,
         signals: c.hvf.signals,
+        strategyCandidates: c.strategyCandidates?.map((sc) => ({
+          strategy: sc.strategy,
+          direction: sc.direction,
+          score: sc.score,
+          conviction: sc.conviction,
+          reason: sc.reason,
+          signals: sc.signals,
+          entryPrice: sc.entryPrice,
+          suggestedSL: sc.suggestedSL,
+          suggestedTP: sc.suggestedTP,
+          rewardRiskRatio: sc.rewardRiskRatio,
+        })),
       }));
     }
 
@@ -227,6 +252,13 @@ export async function handleBinanceToolCall(
       if (!binanceSymbol(input.symbol)) {
         return { error: `${input.symbol} has no Binance USDC pair — cannot trade on Binance.` };
       }
+      const VALID_STRATS: ReadonlySet<StrategyName> = new Set([
+        "hvf", "trend_break", "mean_revert", "hvf_mtf",
+      ]);
+      const strategy: StrategyName =
+        input.strategy && VALID_STRATS.has(input.strategy as StrategyName)
+          ? (input.strategy as StrategyName)
+          : "hvf";
       const result = await openBinanceTrade({
         asset: input.symbol,
         sizeUsd: Number(input.sizeUsd),
@@ -234,6 +266,7 @@ export async function handleBinanceToolCall(
         hvfScore: Number(input.hvfScore),
         conviction: input.conviction,
         agentKind: "strategic",
+        strategy,
       });
       return result;
     }

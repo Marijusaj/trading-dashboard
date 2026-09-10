@@ -16,6 +16,7 @@ import { binance } from "@/lib/binance/client";
 import { binanceSymbol } from "@/lib/binance/symbols";
 import { checkGuardrails, recordEntry, recordClose, type ProposedTrade } from "./guardrails";
 import { sanitizeReasoning, type AgentKind } from "./execute";
+import type { StrategyName } from "./strategies/types";
 
 export interface BinanceOpenRequest {
   asset: string;                    // universe symbol e.g. "TRX"
@@ -23,6 +24,10 @@ export interface BinanceOpenRequest {
   reasoning: string;
   hvfScore: number;
   conviction: "high" | "medium" | "low";
+  /** Which strategy triggered this trade. Persisted to both
+   *  agent_decisions.strategy and trades.strategy for per-strategy PnL.
+   *  Defaults to 'hvf'. */
+  strategy?: StrategyName;
   agentKind?: AgentKind;
 }
 
@@ -45,6 +50,7 @@ export interface BinanceOpenResult {
 export async function openBinanceTrade(req: BinanceOpenRequest): Promise<BinanceOpenResult> {
   const sql = db();
   const cleanReasoning = sanitizeReasoning(req.reasoning);
+  const strategy: StrategyName = req.strategy || "hvf";
   const pair = binanceSymbol(req.asset);
   if (!pair) {
     return {
@@ -94,12 +100,12 @@ export async function openBinanceTrade(req: BinanceOpenRequest): Promise<Binance
     const decRows = await sql`
       INSERT INTO agent_decisions (
         environment, agent_kind, decision_type, asset, reasoning,
-        hvf_score, conviction, outcome_status, guardrail_violation, raw_context, venue
+        hvf_score, conviction, outcome_status, guardrail_violation, raw_context, venue, strategy
       ) VALUES (
         'binance', ${req.agentKind || 'strategic'}, 'open', ${req.asset}, ${cleanReasoning},
         ${req.hvfScore}, ${req.conviction}, 'skipped_guardrail',
         ${gate.violation}, ${JSON.stringify({ proposed, details: gate.details })}::jsonb,
-        'binance'
+        'binance', ${strategy}
       )
       RETURNING id
     ` as unknown as { id: string }[];
@@ -117,12 +123,12 @@ export async function openBinanceTrade(req: BinanceOpenRequest): Promise<Binance
   const decRows = await sql`
     INSERT INTO agent_decisions (
       environment, agent_kind, decision_type, asset, reasoning,
-      hvf_score, conviction, outcome_status, raw_context, venue
+      hvf_score, conviction, outcome_status, raw_context, venue, strategy
     ) VALUES (
       'binance', ${req.agentKind || 'strategic'}, 'open', ${req.asset}, ${cleanReasoning},
       ${req.hvfScore}, ${req.conviction}, 'pending',
       ${JSON.stringify({ proposed, details: gate.details })}::jsonb,
-      'binance'
+      'binance', ${strategy}
     )
     RETURNING id
   ` as unknown as { id: string }[];
@@ -158,14 +164,14 @@ export async function openBinanceTrade(req: BinanceOpenRequest): Promise<Binance
       INSERT INTO trades (
         decision_id, environment, agent_kind, etoro_position_id, etoro_order_id,
         asset, instrument_id, side, entry_price, size_usd, units,
-        stop_loss, take_profit, leverage, opened_at, status, venue
+        stop_loss, take_profit, leverage, opened_at, status, venue, strategy
       ) VALUES (
         ${decisionId}, 'binance', ${req.agentKind || 'strategic'},
         ${String(order.orderId)}, ${String(order.orderId)},
         ${req.asset}, 0, 'long',
         ${avgPrice}, ${filledCost}, ${filledQty},
         ${syntheticSL}, ${syntheticTP}, 1,
-        now(), 'open', 'binance'
+        now(), 'open', 'binance', ${strategy}
       )
       RETURNING id
     ` as unknown as { id: string }[];

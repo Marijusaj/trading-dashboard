@@ -64,6 +64,10 @@ export interface EtoroCandle {
   high: number;
   low: number;
   close: number;
+  /** Bar volume. eToro returns null for some instruments/timeframes, so
+   *  consumers must treat this as optional — HVF scores the volume leg
+   *  neutral when it isn't fully populated. */
+  volume?: number | null;
 }
 
 export interface EtoroPosition {

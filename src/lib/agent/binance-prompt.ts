@@ -24,6 +24,18 @@ Same as the eToro flow:
 
 The HVF score is computed for you. Spot LONG entry bar: HVF ≥ 65 AND direction="long".
 
+# Strategy lineup (multi-strategy mode)
+scan_universe returns \`strategyCandidates\` per asset — verdicts from hvf, trend_break,
+mean_revert and hvf_mtf. Entry bar for a non-HVF strategy: score > **50** AND its setup
+logic clearly fits the price action. Each strategy has its OWN scoring scale — do NOT
+compare scores across strategies; pick by setup fit, not by raw number. Pass the chosen
+strategy name to open_position so per-strategy PnL is tracked.
+- **hvf** — compression-to-breakout funnel. Wants squeeze + EMA stack + level proximity.
+- **trend_break** — momentum catcher. Close > 20-bar high + ATR expanding + above EMA200.
+- **mean_revert** — snap-back from RSI extreme near multi-day support.
+- **hvf_mtf** — HVF confluence across the primary and a 4x-aggregated higher timeframe.
+Short candidates are filtered out before you see them — spot is long-only.
+
 # Hard rules
 1. Min reward:risk = 1.5
 2. Max position size: $50 USDC per trade (raise as balance grows — currently ~$500 base)

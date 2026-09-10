@@ -8,12 +8,17 @@ import { binanceSymbol } from "@/lib/binance/symbols";
 import { analyzeHVF, type OHLC } from "./hvf";
 import { UNIVERSE, type UniverseEntry } from "./universe";
 import type { ScanCandidate } from "./scanner";
+import type { Strategy, StrategyCandidate, StrategyContext } from "./strategies/types";
+import { BROKER_MIN_SL_PCT } from "./strategies/types";
 
 export interface BinanceScanOptions {
   universe?: UniverseEntry[];
   /** Candle timeframe — Binance interval string. Default "1d" for strategic. */
   timeframe?: BinanceInterval;
   candleCount?: number;
+  /** When provided, each strategy is also run per asset and results are
+   *  attached as `strategyCandidates`. Mirrors the eToro scanner. */
+  strategies?: Strategy[];
 }
 
 /**
@@ -41,11 +46,36 @@ export async function scanBinanceUniverse(
         high: k.high,
         low: k.low,
         close: k.close,
+        volume: k.volume,
       }));
       const hvf = analyzeHVF(ohlc);
       if (!hvf) return null;
 
       const currentPrice = klines[klines.length - 1].close;
+
+      // Multi-strategy mode. Binance spot is long-only, so short
+      // candidates are dropped regardless of strategy verdict.
+      let strategyCandidates: StrategyCandidate[] | undefined;
+      if (opts.strategies && opts.strategies.length > 0) {
+        const sctx: StrategyContext = {
+          symbol: entry.symbol,
+          candles: ohlc,
+          currentPrice,
+          assetClass: "crypto",
+          brokerMinSlPct: BROKER_MIN_SL_PCT.crypto,
+        };
+        strategyCandidates = opts.strategies
+          .map((strat) => {
+            try {
+              return strat(sctx);
+            } catch (e) {
+              console.error(`[binance-scanner] strategy threw for ${entry.symbol}:`, e);
+              return null;
+            }
+          })
+          .filter((c): c is StrategyCandidate => c !== null)
+          .filter((c) => c.direction === "long");
+      }
 
       // Binance Spot is long-only and 24/7 (always "market open").
       return {
@@ -59,6 +89,7 @@ export async function scanBinanceUniverse(
         hvf,
         marketIsOpen: true,
         marketHoursReason: "binance spot 24/7",
+        strategyCandidates,
       };
     } catch (e) {
       console.warn(`[binance-scanner] ${entry.symbol} scan failed:`, e instanceof Error ? e.message : e);

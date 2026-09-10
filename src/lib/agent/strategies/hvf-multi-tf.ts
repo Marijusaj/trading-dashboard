@@ -25,12 +25,17 @@ function aggregate(candles: OHLC[], factor: number): OHLC[] {
   const out: OHLC[] = [];
   for (let i = 0; i + factor <= candles.length; i += factor) {
     const slice = candles.slice(i, i + factor);
+    // Volume is additive across an aggregated bar. Only carry it when
+    // every constituent bar has it — a partial sum would understate the
+    // aggregated volume and read as contraction that isn't there.
+    const haveVolume = slice.every((c) => (c.volume ?? 0) > 0);
     out.push({
       time: slice[0].time,
       open: slice[0].open,
       high: Math.max(...slice.map((c) => c.high)),
       low: Math.min(...slice.map((c) => c.low)),
       close: slice[slice.length - 1].close,
+      volume: haveVolume ? slice.reduce((s, c) => s + (c.volume ?? 0), 0) : undefined,
     });
   }
   return out;
