@@ -8,6 +8,7 @@
 //     | jq '.symbols[] | select(.quoteAsset=="USDC" and .status=="TRADING") | .symbol'
 
 export const BINANCE_USDC_SYMBOL: Record<string, string> = {
+  // ── Verified against exchangeInfo ──────────────────────────────
   BTC: "BTCUSDC",
   ETH: "ETHUSDC",
   TRX: "TRXUSDC",
@@ -18,6 +19,29 @@ export const BINANCE_USDC_SYMBOL: Record<string, string> = {
   DOGE: "DOGEUSDC",
   AVAX: "AVAXUSDC",
   LINK: "LINKUSDC",
+
+  // ── NOT yet verified against exchangeInfo ──────────────────────
+  // The May 2026 universe expansion added DOT/ATOM/NEAR/INJ/SUI to
+  // UNIVERSE but never here, so scanBinanceUniverse silently skipped all
+  // five — the Binance agent has never seen them. XLM is new to the
+  // universe. These follow the <BASE>USDC convention every verified pair
+  // above uses, but the listings could not be confirmed from the machine
+  // that added them (api.binance.com answers HTTP 451 outside eligible
+  // regions), so treat them as provisional.
+  //
+  // Confirm with:  GET /api/admin/binance?action=pairs
+  // which checks every universe symbol against live exchangeInfo and
+  // reports mapped-but-missing pairs. Delete any line it flags.
+  //
+  // Failure mode if a pair does not exist is identical to leaving the
+  // symbol unmapped: binance.klines throws, scanBinanceUniverse catches
+  // per-asset and returns null, so the symbol is skipped with a warning.
+  XLM: "XLMUSDC",
+  DOT: "DOTUSDC",
+  ATOM: "ATOMUSDC",
+  NEAR: "NEARUSDC",
+  INJ: "INJUSDC",
+  SUI: "SUIUSDC",
 };
 
 /**

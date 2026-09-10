@@ -69,6 +69,16 @@ export const TACTICAL_UNIVERSE: UniverseEntry[] = [
     minSizeUsd: 10,
   },
 
+  {
+    symbol: "XLM",
+    display: "Stellar",
+    assetClass: "crypto",
+    thesis: "Payment rail, moves with XRP — frequent 15m setups on the same catalysts",
+    shortAllowed: true,
+    instrumentId: null,
+    minSizeUsd: 10,
+  },
+
   // ── Tactical expansion (May 2026) — high-vol mid-caps for 15m HVF ──
   { symbol: "DOT",  display: "Polkadot",   assetClass: "crypto", thesis: "L0 mid-cap, frequent intraday swings", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },
   { symbol: "ATOM", display: "Cosmos",     assetClass: "crypto", thesis: "Interchain narrative, sharp 15m moves", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },

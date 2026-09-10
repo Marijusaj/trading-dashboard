@@ -48,6 +48,18 @@ const UNIVERSE_ALIASES: Record<string, string[]> = {
   DOGE:   ["DOGE", "DOGEUSD", "DOGECOIN"],
   AVAX:   ["AVAX", "AVAXUSD", "AVALANCHE"],
   LINK:   ["LINK", "LINKUSD", "CHAINLINK"],
+  XLM:    ["XLM", "XLMUSD", "STELLAR"],
+  // Crypto from the May 2026 expansion. Without an entry here
+  // matchesUniverse falls back to the bare symbol, which only matches if
+  // eToro happens to list it as exactly "DOT" rather than "DOTUSD" or
+  // "POLKADOT" — so these were resolvable only by luck. Equities and ETFs
+  // are left to the bare-ticker fallback deliberately: eToro lists them by
+  // plain ticker, which is what the fallback already tries.
+  DOT:    ["DOT", "DOTUSD", "POLKADOT"],
+  ATOM:   ["ATOM", "ATOMUSD", "COSMOS"],
+  NEAR:   ["NEAR", "NEARUSD", "NEARPROTOCOL"],
+  INJ:    ["INJ", "INJUSD", "INJECTIVE"],
+  SUI:    ["SUI", "SUIUSD"],
   GOLD:   ["GOLD", "XAUUSD", "GOLD-USD"],
   SILVER: ["SILVER", "XAGUSD", "SILVER-USD"],
   MSTR:   ["MSTR"],
