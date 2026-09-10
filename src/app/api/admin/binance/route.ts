@@ -7,6 +7,7 @@
 //   4. Place a manual market buy          ?action=buy&symbol=TRX&size=50
 //   5. Place a manual market sell         ?action=sell&symbol=TRX&qty=100
 //   6. List open orders                   ?action=open
+//   7. Verify the USDC pair map          ?action=pairs
 //
 // This is the manual interface while autonomous Binance trading is
 // still being wired up. Once the Binance cron route lands, the agent
@@ -14,7 +15,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { binance } from "@/lib/binance/client";
-import { binanceSymbol, timeframeToBinanceInterval } from "@/lib/binance/symbols";
+import { binanceSymbol, timeframeToBinanceInterval, BINANCE_USDC_SYMBOL } from "@/lib/binance/symbols";
+import { UNIVERSE } from "@/lib/agent/universe";
 import { analyzeHVF } from "@/lib/agent/hvf";
 
 export const dynamic = "force-dynamic";
@@ -112,6 +114,56 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ ok: true, order });
       }
 
+      case "pairs": {
+        // Verify BINANCE_USDC_SYMBOL against live exchangeInfo. The map is
+        // hand-maintained and drifts: a universe expansion that forgets to
+        // add an entry here makes scanBinanceUniverse skip the asset in
+        // silence, which is how DOT/ATOM/NEAR/INJ/SUI stayed invisible to
+        // the Binance agent. Read-only.
+        const cryptos = UNIVERSE.filter((u) => u.assetClass === "crypto");
+        const checks = await Promise.all(
+          cryptos.map(async (u) => {
+            // Check the mapped pair, or the conventional one if unmapped —
+            // an unmapped symbol whose pair DOES exist is a gap worth naming.
+            const mapped = BINANCE_USDC_SYMBOL[u.symbol] ?? null;
+            const candidate = mapped ?? `${u.symbol}USDC`;
+            try {
+              const info = await binance.exchangeInfo(candidate);
+              const tradable = info.status === "TRADING";
+              return {
+                symbol: u.symbol,
+                pair: candidate,
+                mapped: mapped !== null,
+                exists: true,
+                status: info.status,
+                verdict: mapped
+                  ? (tradable ? "ok" : `MAPPED BUT NOT TRADING (${info.status})`)
+                  : `UNMAPPED — pair exists${tradable ? " and is tradable; add it" : ` but status ${info.status}`}`,
+              };
+            } catch {
+              return {
+                symbol: u.symbol,
+                pair: candidate,
+                mapped: mapped !== null,
+                exists: false,
+                status: "not found",
+                verdict: mapped
+                  ? "MAPPED BUT PAIR DOES NOT EXIST — remove it"
+                  : "no USDC pair (correctly unmapped)",
+              };
+            }
+          }),
+        );
+        const problems = checks.filter((c) => c.verdict !== "ok" && !c.verdict.startsWith("no USDC pair"));
+        return NextResponse.json({
+          ok: problems.length === 0,
+          checked: checks.length,
+          problems: problems.length,
+          needsAttention: problems,
+          all: checks.sort((a, b) => a.symbol.localeCompare(b.symbol)),
+        });
+      }
+
       case "open": {
         const orders = symbol
           ? await binance.openOrders(binanceSymbol(symbol) || symbol)
@@ -121,7 +173,7 @@ export async function GET(req: NextRequest) {
 
       default:
         return NextResponse.json({
-          error: `Unknown action: ${action}. Valid: ping, balances, scan, buy, sell, open`,
+          error: `Unknown action: ${action}. Valid: ping, balances, scan, pairs, buy, sell, open`,
         }, { status: 400 });
     }
   } catch (e) {

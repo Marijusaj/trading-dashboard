@@ -36,6 +36,7 @@ export const UNIVERSE: UniverseEntry[] = [
   { symbol: "DOGE", display: "Dogecoin", assetClass: "crypto", thesis: "High beta, Musk sentiment", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },
   { symbol: "AVAX", display: "Avalanche", assetClass: "crypto", thesis: "L1 competitor — SHORTS DISALLOWED on this eToro account (errorCode 747); long-only", shortAllowed: false, instrumentId: null, minSizeUsd: 10 },
   { symbol: "LINK", display: "Chainlink", assetClass: "crypto", thesis: "Oracle infrastructure", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },
+  { symbol: "XLM", display: "Stellar", assetClass: "crypto", thesis: "Cross-border payment rail — XRP's closest peer; Francis covers the two together on devaluation setups", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },
 
   // ── Commodity CFDs (min $1000 due to leverage requirement) ─────
   { symbol: "GOLD", display: "Gold", assetClass: "commodity", thesis: "Debasement hedge, $24K Francis target", shortAllowed: true, instrumentId: null, minSizeUsd: 1000 },
