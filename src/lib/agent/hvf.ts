@@ -38,8 +38,12 @@ export interface HVFAnalysis {
     currentATR: number;
     historicATR: number;
     compressionRatio: number;   // current / historic, < 1 = compressed
-    upperTrendlineSlope: number;
-    lowerTrendlineSlope: number;
+    /** Fraction of the early band the highs stepped down by. */
+    upperPull: number;
+    /** Fraction of the early band the lows stepped up by. */
+    lowerPull: number;
+    /** upperPull + lowerPull — how much of its own band the asset closed. */
+    bandContraction: number;
     funnelConvergence: number;  // 0..1, 1 = perfect convergence
     ema20: number;
     ema50: number;
@@ -133,20 +137,44 @@ export function analyzeHVF(candles: OHLC[]): HVFAnalysis | null {
   const rangeCompression = Math.max(0, Math.min(25, (1 - compressionRatio) * 50));
 
   // ── Funnel structure (converging trendlines) ──────────────────
-  // Look at recent 30 bars. Take rolling-window highs and lows.
+  // A funnel is a SHAPE: highs stepping down while lows step up. Magnitude
+  // of compression is rangeCompression's job (ATR ratio); this leg's only
+  // distinctive contribution is whether both boundaries actually converge.
+  //
+  // Measured over three consecutive 10-bar sub-windows rather than two
+  // 15-bar halves. Two halves compare one min/max block against another, so
+  // a single outlier bar early in the window sets a huge "before" band and
+  // any quieter second half reads as a squeeze — which is how XRP could
+  // score a full 25/25 for "converging structure" on the same candles where
+  // its ATR was 13% ABOVE its own 60-bar baseline. Requiring the highs to be
+  // non-increasing and the lows non-decreasing across all three sub-windows
+  // asks for a wedge that actually holds, which one spike cannot fake.
   const recent = candles.slice(-30);
-  const recentHighs = recent.slice(0, 15).reduce((m, c) => Math.max(m, c.high), 0);
-  const tailHighs = recent.slice(-15).reduce((m, c) => Math.max(m, c.high), 0);
-  const recentLows = recent.slice(0, 15).reduce((m, c) => Math.min(m, c.low), Infinity);
-  const tailLows = recent.slice(-15).reduce((m, c) => Math.min(m, c.low), Infinity);
-  // Upper line: from recentHighs (early) to tailHighs (late) — should slope DOWN
-  const upperTrendlineSlope = (tailHighs - recentHighs) / recentHighs / 15;
-  // Lower line: should slope UP
-  const lowerTrendlineSlope = (tailLows - recentLows) / recentLows / 15;
-  // Convergence: upper slope negative AND lower slope positive
-  const isConverging = upperTrendlineSlope < 0 && lowerTrendlineSlope > 0;
-  const convergenceMagnitude = Math.abs(upperTrendlineSlope) + Math.abs(lowerTrendlineSlope);
-  const funnelConvergence = isConverging ? Math.min(1, convergenceMagnitude * 100) : 0;
+  const win = (from: number, to: number) => {
+    const w = recent.slice(from, to);
+    return {
+      high: w.reduce((m, c) => Math.max(m, c.high), 0),
+      low: w.reduce((m, c) => Math.min(m, c.low), Infinity),
+    };
+  };
+  const w1 = win(0, 10);
+  const w2 = win(10, 20);
+  const w3 = win(20, 30);
+  const earlyBand = w1.high - w1.low;
+  const lateBand = w3.high - w3.low;
+  // Fractions of the asset's OWN starting band, so the leg is scale-free:
+  // an asset already coiled tight is judged on further tightening rather
+  // than on having a wide band left to give back.
+  const upperPull = earlyBand > 0 ? (w1.high - w3.high) / earlyBand : 0;
+  const lowerPull = earlyBand > 0 ? (w3.low - w1.low) / earlyBand : 0;
+  const bandContraction = earlyBand > 0 ? (earlyBand - lateBand) / earlyBand : 0;
+  // Monotone on both edges — a wedge, not a drift and not one wick.
+  const isConverging =
+    w1.high >= w2.high && w2.high >= w3.high &&
+    w1.low <= w2.low && w2.low <= w3.low &&
+    upperPull > 0 && lowerPull > 0;
+  // Full marks at a band halved across the window; linear below.
+  const funnelConvergence = isConverging ? Math.max(0, Math.min(1, bandContraction / 0.5)) : 0;
   const funnelStructure = funnelConvergence * 25;
 
   // ── Volume contraction ─────────────────────────────────────────
@@ -220,7 +248,7 @@ export function analyzeHVF(candles: OHLC[]): HVFAnalysis | null {
     signals.push(`ATR compressed to ${(compressionRatio * 100).toFixed(0)}% of 60-bar baseline`);
   }
   if (isConverging) {
-    signals.push(`Funnel: highs descending ${(upperTrendlineSlope * 100).toFixed(2)}%/bar, lows ascending ${(lowerTrendlineSlope * 100).toFixed(2)}%/bar`);
+    signals.push(`Funnel: band closed ${(bandContraction * 100).toFixed(0)}% of its own width (highs down ${(upperPull * 100).toFixed(0)}%, lows up ${(lowerPull * 100).toFixed(0)}%)`);
   }
   if (volumeDataAvailable && volumeContraction > 8) {
     signals.push(`Volume contracted into squeeze`);
@@ -247,8 +275,9 @@ export function analyzeHVF(candles: OHLC[]): HVFAnalysis | null {
       currentATR: Number(currentATR.toFixed(6)),
       historicATR: Number(historicATR.toFixed(6)),
       compressionRatio: Number(compressionRatio.toFixed(3)),
-      upperTrendlineSlope: Number(upperTrendlineSlope.toFixed(6)),
-      lowerTrendlineSlope: Number(lowerTrendlineSlope.toFixed(6)),
+      upperPull: Number(upperPull.toFixed(4)),
+      lowerPull: Number(lowerPull.toFixed(4)),
+      bandContraction: Number(bandContraction.toFixed(4)),
       funnelConvergence: Number(funnelConvergence.toFixed(3)),
       ema20: Number(ema20.toFixed(6)),
       ema50: Number(ema50.toFixed(6)),
