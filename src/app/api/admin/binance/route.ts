@@ -8,6 +8,9 @@
 //   5. Place a manual market sell         ?action=sell&symbol=TRX&qty=100
 //   6. List open orders                   ?action=open
 //   7. Verify the USDC pair map          ?action=pairs
+//      (also runs daily at 07:00 UTC via vercel.json — Vercel sends the
+//       CRON_SECRET bearer itself; problems land in runtime logs as
+//       [binance-pairs] errors, since the JSON body has no reader on cron)
 //
 // This is the manual interface while autonomous Binance trading is
 // still being wired up. Once the Binance cron route lands, the agent
@@ -155,6 +158,15 @@ export async function GET(req: NextRequest) {
           }),
         );
         const problems = checks.filter((c) => c.verdict !== "ok" && !c.verdict.startsWith("no USDC pair"));
+        // Log, don't just return: on the cron path nobody reads the body.
+        // console.error so it stands out in Vercel runtime logs / alerts.
+        if (problems.length > 0) {
+          for (const p of problems) {
+            console.error(`[binance-pairs] ${p.symbol} (${p.pair}): ${p.verdict}`);
+          }
+        } else {
+          console.log(`[binance-pairs] all ${checks.length} crypto universe symbols verified against exchangeInfo`);
+        }
         return NextResponse.json({
           ok: problems.length === 0,
           checked: checks.length,
