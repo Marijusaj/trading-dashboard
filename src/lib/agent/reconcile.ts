@@ -107,13 +107,22 @@ export async function reconcileEnv(env: AgentEnvironment): Promise<ReconcileSumm
   // 2c. Closed-trade history for positions that vanished from the
   // portfolio — one call gives the real closeRate + netProfit for all.
   const closedByPositionId = new Map<string, EtoroClosedTrade>();
+  // Realized P&L (net of fees) per opening order. A partial close books
+  // its slice as a separate history row under a NEW positionId but the
+  // same orderId, so the trade's total P&L is the sum over its order.
+  const pnlByOrderId = new Map<string, number>();
   const vanished = portfolioOk
     ? trades.filter((t) => t.etoro_position_id && !portfolioPositionIds.has(t.etoro_position_id))
     : [];
   if (vanished.length > 0) {
     try {
       const closed = await etoro.getTradeHistory(env, historyMinDate(vanished.map((t) => t.opened_at)));
-      for (const c of closed) closedByPositionId.set(c.positionId, c);
+      for (const c of closed) {
+        closedByPositionId.set(c.positionId, c);
+        if (c.orderId && c.orderId !== "0") {
+          pnlByOrderId.set(c.orderId, (pnlByOrderId.get(c.orderId) ?? 0) + c.netProfit - c.fees);
+        }
+      }
     } catch (e) {
       summary.errors.push(`trade history fetch failed: ${e instanceof Error ? e.message : e}`);
     }
@@ -140,8 +149,9 @@ export async function reconcileEnv(env: AgentEnvironment): Promise<ReconcileSumm
         const closed = closedByPositionId.get(t.etoro_position_id!);
         if (closed) {
           exitPrice = closed.closeRate;
-          // netProfit excludes fees; record the fully-loaded result
-          pnlUsd = closed.netProfit - closed.fees;
+          // netProfit excludes fees; record the fully-loaded result,
+          // including slices taken earlier by close_position_partial
+          pnlUsd = pnlByOrderId.get(closed.orderId) ?? closed.netProfit - closed.fees;
           exitReason = classifyExternalClose(t, closed);
         } else {
           // History not caught up yet — best-effort estimate: snap to
