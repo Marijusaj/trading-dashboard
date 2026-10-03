@@ -1,6 +1,7 @@
-// Paginate eToro /market-data/instruments, resolve our universe symbols
-// to their instrument IDs, and write the cache to the Neon `instruments`
-// table. The scanner reads this cache to turn universe symbols into
+// Resolve our universe symbols to eToro instrument IDs and write the
+// cache to the Neon `instruments` table. Primary path is one exact
+// lookup via /api/v2/market-data/instruments?symbols=…; only symbols it
+// can't resolve fall back to paging the full catalog with aliases. The scanner reads this cache to turn universe symbols into
 // tradable instrument IDs — if it's empty, every scan returns zero
 // candidates and the agent can never open a position.
 //
@@ -14,11 +15,19 @@
 // Idempotent — uses ON CONFLICT DO UPDATE.
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/neon";
-import { etoro, type InstrumentMeta } from "@/lib/etoro/client";
+import { etoro, type InstrumentMeta, type InstrumentV2 } from "@/lib/etoro/client";
 import { UNIVERSE } from "@/lib/agent/universe";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
+
+// Our asset class → eToro v2 instrument `type`
+const V2_TYPE_FOR_CLASS: Record<string, string> = {
+  crypto: "Crypto",
+  commodity: "Commodity",
+  equity: "Stocks",
+  etf: "ETF",
+};
 
 // eToro instrumentTypeID → our asset_class label
 function classifyInstrument(typeId: number): string {
@@ -91,43 +100,70 @@ async function discoverAndCache(req: NextRequest): Promise<NextResponse> {
   try {
     const sql = db();
 
-    // Pull the FULL catalog so we can pick the asset-class-correct match
-    // (e.g. "TRON Inc" stock vs "TRX" crypto — both match "TRON" alias).
-    const instruments = await etoro.listInstruments("paper", 500);
-    const totalSeen = instruments.length;
+    type Match = { instrumentID: number; symbolFull: string; displayName: string; instrumentTypeID?: number; type?: string; source: "v2-symbols" | "catalog-alias" };
+    const matches: Record<string, Match | null> = {};
 
-    const matches: Record<string, { instrumentID: number; symbolFull: string; displayName: string; instrumentTypeID: number } | null> = {};
-
-    // Asset class → expected instrumentTypeID (best-effort)
-    const expectedTypeId: Record<string, number[]> = {
-      crypto: [10],
-      commodity: [6],
-      equity: [11],
-      etf: [7],
-    };
-
+    // 1. Exact symbol lookup — one call for the whole universe.
+    const v2 = await etoro.getInstrumentsBySymbols(UNIVERSE.map((u) => u.symbol), "paper");
     for (const u of UNIVERSE) {
-      const candidates = instruments.filter((m) => matchesUniverse(m, u.symbol));
-      // Prefer matches whose instrumentTypeID matches our expected asset class
-      const expected = expectedTypeId[u.assetClass] || [];
-      const ranked = candidates.sort((a, b) => {
-        const aMatch = expected.includes(a.instrumentTypeID) ? 0 : 1;
-        const bMatch = expected.includes(b.instrumentTypeID) ? 0 : 1;
-        if (aMatch !== bMatch) return aMatch - bMatch;
-        // Tiebreak: prefer EXACT symbolFull match
-        const aExact = a.symbolFull?.toUpperCase() === u.symbol ? 0 : 1;
-        const bExact = b.symbolFull?.toUpperCase() === u.symbol ? 0 : 1;
-        return aExact - bExact;
-      });
-      const best = ranked[0];
-      matches[u.symbol] = best
-        ? {
-            instrumentID: best.instrumentID,
-            symbolFull: best.symbolFull,
-            displayName: best.instrumentDisplayName,
-            instrumentTypeID: best.instrumentTypeID,
-          }
-        : null;
+      const wantType = V2_TYPE_FOR_CLASS[u.assetClass];
+      const candidates = v2
+        .filter((r) => r.symbol?.toUpperCase() === u.symbol.toUpperCase())
+        // Prefer the asset-class-correct listing if a ticker is ambiguous
+        .sort((a, b) => (a.type === wantType ? 0 : 1) - (b.type === wantType ? 0 : 1));
+      const best: InstrumentV2 | undefined = candidates[0];
+      if (best) {
+        matches[u.symbol] = {
+          instrumentID: best.instrumentId,
+          symbolFull: best.symbol,
+          displayName: best.displayName,
+          type: best.type,
+          source: "v2-symbols",
+        };
+      }
+    }
+
+    // 2. Fallback for anything the exact lookup missed: page the FULL
+    // catalog and alias-match, picking the asset-class-correct hit
+    // (e.g. "TRON Inc" stock vs "TRX" crypto — both match "TRON" alias).
+    const unresolved = UNIVERSE.filter((u) => !matches[u.symbol]);
+    let totalSeen = v2.length;
+    if (unresolved.length > 0) {
+      const instruments = await etoro.listInstruments("paper", 500);
+      totalSeen = instruments.length;
+
+      // Asset class → expected instrumentTypeID (best-effort)
+      const expectedTypeId: Record<string, number[]> = {
+        crypto: [10],
+        commodity: [6],
+        equity: [11],
+        etf: [7],
+      };
+
+      for (const u of unresolved) {
+        const candidates = instruments.filter((m) => matchesUniverse(m, u.symbol));
+        // Prefer matches whose instrumentTypeID matches our expected asset class
+        const expected = expectedTypeId[u.assetClass] || [];
+        const ranked = candidates.sort((a, b) => {
+          const aMatch = expected.includes(a.instrumentTypeID) ? 0 : 1;
+          const bMatch = expected.includes(b.instrumentTypeID) ? 0 : 1;
+          if (aMatch !== bMatch) return aMatch - bMatch;
+          // Tiebreak: prefer EXACT symbolFull match
+          const aExact = a.symbolFull?.toUpperCase() === u.symbol ? 0 : 1;
+          const bExact = b.symbolFull?.toUpperCase() === u.symbol ? 0 : 1;
+          return aExact - bExact;
+        });
+        const best = ranked[0];
+        matches[u.symbol] = best
+          ? {
+              instrumentID: best.instrumentID,
+              symbolFull: best.symbolFull,
+              displayName: best.instrumentDisplayName,
+              instrumentTypeID: best.instrumentTypeID,
+              source: "catalog-alias",
+            }
+          : null;
+      }
     }
 
     // Mark unmatched
@@ -178,6 +214,7 @@ async function discoverAndCache(req: NextRequest): Promise<NextResponse> {
       ok: true,
       timestamp: new Date().toISOString(),
       totalInstrumentsFromEtoro: totalSeen,
+      resolvedBySymbolLookup: Object.values(matches).filter((m) => m?.source === "v2-symbols").length,
       universeMatched: rows.length,
       universeMissing: UNIVERSE.length - rows.length,
       upserted,
