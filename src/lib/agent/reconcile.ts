@@ -15,12 +15,13 @@
 //
 // 2. Open trades we know about (etoro_position_id present): verify
 //    they're still in eToro's positions[]. If not, the position was
-//    closed (TP/SL, manual, expired). Mark trade closed with best-
-//    effort exit data.
+//    closed (TP/SL, manual, expired). Mark trade closed with the real
+//    close rate and realized P&L from eToro's trade history; fall back
+//    to a mid-rate estimate only if history hasn't caught up yet.
 //
 // Returns a summary the agent loop logs into the next decision.
 import { db } from "@/lib/neon";
-import { etoro } from "@/lib/etoro/client";
+import { etoro, type EtoroClosedTrade } from "@/lib/etoro/client";
 import { recordClose, recordEntry } from "./guardrails";
 import type { AgentEnvironment } from "@/lib/neon";
 
@@ -79,8 +80,10 @@ export async function reconcileEnv(env: AgentEnvironment): Promise<ReconcileSumm
   // 2. Snapshot eToro portfolio once for cross-checks + units backfill
   let portfolioPositionIds = new Set<string>();
   let positionUnitsByID = new Map<string, number>();
+  let portfolioOk = false;
   try {
     const portfolio = await etoro.getPortfolio(env);
+    portfolioOk = true;
     portfolioPositionIds = new Set(portfolio.positions.map((p) => String(p.positionID)));
     positionUnitsByID = new Map(
       portfolio.positions.map((p) => [String(p.positionID), Number(p.units || 0)]),
@@ -101,6 +104,21 @@ export async function reconcileEnv(env: AgentEnvironment): Promise<ReconcileSumm
     }
   }
 
+  // 2c. Closed-trade history for positions that vanished from the
+  // portfolio — one call gives the real closeRate + netProfit for all.
+  const closedByPositionId = new Map<string, EtoroClosedTrade>();
+  const vanished = portfolioOk
+    ? trades.filter((t) => t.etoro_position_id && !portfolioPositionIds.has(t.etoro_position_id))
+    : [];
+  if (vanished.length > 0) {
+    try {
+      const closed = await etoro.getTradeHistory(env, historyMinDate(vanished.map((t) => t.opened_at)));
+      for (const c of closed) closedByPositionId.set(c.positionId, c);
+    } catch (e) {
+      summary.errors.push(`trade history fetch failed: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+
   for (const t of trades) {
     try {
       const hasPosition = !!t.etoro_position_id;
@@ -112,39 +130,50 @@ export async function reconcileEnv(env: AgentEnvironment): Promise<ReconcileSumm
           // Position still open — nothing to do
           continue;
         }
+        // Without a portfolio snapshot we can't tell open from closed —
+        // leave it for the next pass rather than closing everything.
+        if (!portfolioOk) continue;
         // Position closed externally (TP/SL hit, manual close, etc.).
-        // Best-effort PnL: guess exit_price from SL/TP if current price
-        // overshot one, else use current mid-rate.
         let exitPrice: number | null = null;
         let pnlUsd = 0;
-        let exitReason: "stop" | "target" | "expired" = "expired";
-        try {
-          const rates = await etoro.getRates([Number(t.instrument_id)], env);
-          if (rates.length > 0) {
-            const mid = (rates[0].bid + rates[0].ask) / 2;
-            const sl = Number(t.stop_loss);
-            const tp = Number(t.take_profit);
-            const entry = Number(t.entry_price);
-            if (t.side === "long") {
-              if (mid <= sl) { exitPrice = sl; exitReason = "stop"; }
-              else if (mid >= tp) { exitPrice = tp; exitReason = "target"; }
-              else { exitPrice = mid; }
-            } else {
-              if (mid >= sl) { exitPrice = sl; exitReason = "stop"; }
-              else if (mid <= tp) { exitPrice = tp; exitReason = "target"; }
-              else { exitPrice = mid; }
+        let exitReason: "stop" | "target" | "manual_close" | "expired" = "expired";
+        const closed = closedByPositionId.get(t.etoro_position_id!);
+        if (closed) {
+          exitPrice = closed.closeRate;
+          // netProfit excludes fees; record the fully-loaded result
+          pnlUsd = closed.netProfit - closed.fees;
+          exitReason = classifyExternalClose(t, closed);
+        } else {
+          // History not caught up yet — best-effort estimate: snap to
+          // SL/TP if the current price overshot one, else use mid-rate.
+          try {
+            const rates = await etoro.getRates([Number(t.instrument_id)], env);
+            if (rates.length > 0) {
+              const mid = (rates[0].bid + rates[0].ask) / 2;
+              const sl = Number(t.stop_loss);
+              const tp = Number(t.take_profit);
+              const entry = Number(t.entry_price);
+              if (t.side === "long") {
+                if (mid <= sl) { exitPrice = sl; exitReason = "stop"; }
+                else if (mid >= tp) { exitPrice = tp; exitReason = "target"; }
+                else { exitPrice = mid; }
+              } else {
+                if (mid >= sl) { exitPrice = sl; exitReason = "stop"; }
+                else if (mid <= tp) { exitPrice = tp; exitReason = "target"; }
+                else { exitPrice = mid; }
+              }
+              const direction = t.side === "long" ? 1 : -1;
+              const pctMove = ((exitPrice - entry) / entry) * direction;
+              pnlUsd = Number(t.size_usd) * pctMove;
             }
-            const direction = t.side === "long" ? 1 : -1;
-            const pctMove = ((exitPrice - entry) / entry) * direction;
-            pnlUsd = Number(t.size_usd) * pctMove;
+          } catch {
+            // Non-fatal — leave null
           }
-        } catch {
-          // Non-fatal — leave null
         }
         await sql`
           UPDATE trades
              SET status        = 'closed',
-                 closed_at     = now(),
+                 closed_at     = ${closed?.closeTimestamp ?? new Date().toISOString()},
                  exit_price    = ${exitPrice},
                  pnl_usd       = ${pnlUsd || null},
                  exit_reason   = ${exitReason},
@@ -152,7 +181,9 @@ export async function reconcileEnv(env: AgentEnvironment): Promise<ReconcileSumm
            WHERE id = ${t.id}
         `;
         await recordClose(env, pnlUsd);
-        summary.closed_externally.push(`${t.id} (${exitReason}, ~$${pnlUsd.toFixed(2)})`);
+        summary.closed_externally.push(
+          `${t.id} (${exitReason}, ${closed ? "" : "~"}$${pnlUsd.toFixed(2)}${closed ? "" : " est."})`,
+        );
         continue;
       }
 
@@ -236,4 +267,34 @@ export async function reconcileEnv(env: AgentEnvironment): Promise<ReconcileSumm
   `;
 
   return summary;
+}
+
+/** YYYY-MM-DD a day before the earliest open, clamped to eToro's
+ *  < 1 year history lookback. */
+function historyMinDate(openedAts: string[]): string {
+  const earliest = Math.min(...openedAts.map((d) => new Date(d).getTime()));
+  const floor = Date.now() - 364 * 86_400_000;
+  const from = Math.max(floor, (Number.isFinite(earliest) ? earliest : floor) - 86_400_000);
+  return new Date(from).toISOString().slice(0, 10);
+}
+
+/** Was this external close a stop, a target, or something else (manual
+ *  close on eToro)? Checks the close rate against both the SL/TP we set
+ *  and eToro's own record of them (they may have been edited since).
+ *  History reports unset levels as near-zero placeholders, so levels far
+ *  from the open rate are ignored. */
+function classifyExternalClose(
+  t: PendingTradeRow,
+  c: EtoroClosedTrade,
+): "stop" | "target" | "manual_close" {
+  const TOL = 0.002;  // 0.2% — allows for spread/slippage at the trigger
+  const plausible = (lvl: number) => lvl > 0 && Math.abs(lvl - c.openRate) / c.openRate < 0.9;
+  const stops = [Number(t.stop_loss), c.stopLossRate].filter(plausible);
+  const targets = [Number(t.take_profit), c.takeProfitRate].filter(plausible);
+  const long = t.side === "long";
+  const hitStop = stops.some((sl) => (long ? c.closeRate <= sl * (1 + TOL) : c.closeRate >= sl * (1 - TOL)));
+  const hitTarget = targets.some((tp) => (long ? c.closeRate >= tp * (1 - TOL) : c.closeRate <= tp * (1 + TOL)));
+  if (hitStop && !hitTarget) return "stop";
+  if (hitTarget && !hitStop) return "target";
+  return "manual_close";
 }

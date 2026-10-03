@@ -1,6 +1,7 @@
 // eToro Public API client.
 // Docs: https://api-portal.etoro.com/api-reference/
-// Base URL: https://public-api.etoro.com/api/v1
+// Base URL: https://public-api.etoro.com/api/v1 (paths starting with
+// "/api/" — e.g. the v2 routes — are resolved against the host instead)
 //
 // Auth (header-based, ALL endpoints require x-user-key):
 //   x-api-key:     <ETORO_PUBLIC_KEY>     — single application key, both envs
@@ -24,7 +25,8 @@ import {
   envToExecPathSegment,
 } from "./types";
 
-const BASE_URL = "https://public-api.etoro.com/api/v1";
+const HOST = "https://public-api.etoro.com";
+const BASE_URL = `${HOST}/api/v1`;
 
 export class EtoroAPIError extends Error {
   constructor(
@@ -65,7 +67,7 @@ async function request<T>(
 ): Promise<T> {
   const { method = "GET", body, query, retries = 2 } = opts;
 
-  const url = new URL(BASE_URL + path);
+  const url = new URL((path.startsWith("/api/") ? HOST : BASE_URL) + path);
   if (query) {
     for (const [k, v] of Object.entries(query)) {
       if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
@@ -186,13 +188,15 @@ interface SearchResponse {
   items?: Array<Record<string, unknown>>;
 }
 
-interface RatesResponse {
-  rates?: Array<{
-    instrumentID: number;
-    ask: number;
-    bid: number;
-    lastExecution?: number;
-    date?: string;
+/** GET /api/v2/market-data/rates — 200 when every id resolved, 206 when
+ *  only a subset did (unknown ids are simply absent), 404 when none did. */
+interface RatesV2Response {
+  results?: Array<{
+    instrumentId: number;
+    bid: number | null;
+    ask: number | null;
+    date?: string | null;
+    quoteType?: "realtime" | "delayed";
   }>;
 }
 
@@ -233,6 +237,59 @@ interface InstrumentsListResponse {
   pageSize?: number;
 }
 
+/** GET /api/v2/market-data/instruments?symbols=… — exact symbol lookup. */
+export interface InstrumentV2 {
+  instrumentId: number;
+  displayName: string;
+  /** "Crypto" | "Commodity" | "Stocks" | "ETF" | "Forex" | "Indices" | … */
+  type: string;
+  symbol: string;
+  exchangeId?: number;
+}
+
+interface InstrumentsV2Response {
+  results?: InstrumentV2[];
+  pagination?: { hasNext?: boolean; nextPageToken?: string | null };
+}
+
+/** One row of GET /trading/info/trade/{demo/}history — a CLOSED position. */
+export interface EtoroClosedTrade {
+  positionId: string;
+  orderId: string;
+  instrumentId: number;
+  isBuy: boolean;
+  openRate: number;
+  closeRate: number;
+  openTimestamp: string;
+  closeTimestamp: string;
+  stopLossRate: number;
+  takeProfitRate: number;
+  units: number;
+  investment: number;
+  leverage: number;
+  /** Realized P&L in account currency. Does NOT include `fees`. */
+  netProfit: number;
+  fees: number;
+}
+
+interface RawClosedTrade {
+  positionId: number | string;
+  orderId?: number | string;
+  instrumentId: number;
+  isBuy: boolean;
+  openRate: number;
+  closeRate: number;
+  openTimestamp: string;
+  closeTimestamp: string;
+  stopLossRate?: number;
+  takeProfitRate?: number;
+  units?: number;
+  investment?: number;
+  leverage?: number;
+  netProfit?: number;
+  fees?: number;
+}
+
 // ────────────────────────────────────────────────────────────────────
 // Public API surface
 // ────────────────────────────────────────────────────────────────────
@@ -249,7 +306,7 @@ const CANDLE_PERIOD_MAP = {
   OneWeek:          "OneWeek",
 } as const;
 
-const RATES_BATCH_SIZE = 5;  // Larger batches occasionally 500
+const RATES_BATCH_SIZE = 1000;  // v2 /market-data/rates max per request
 
 export const etoro = {
   // ── Portfolio ──────────────────────────────────────────────────
@@ -363,70 +420,76 @@ export const etoro = {
   },
 
   /**
-   * GET /market-data/instruments/rates?instrumentIds=1,2,3
-   * Returns { rates: [{ instrumentID, ask, bid, ... }] }
-   * Larger batches sometimes 500 — we chunk into RATES_BATCH_SIZE.
+   * GET /api/v2/market-data/rates?instrumentIds=1,2,3
+   * Returns { results: [{ instrumentId, bid, ask, date, quoteType }] }.
+   *
+   * Unlike v1 (/market-data/instruments/rates), where ONE unknown id
+   * failed the whole batch and forced per-id retries, v2 answers 206
+   * with the ids it could resolve — so a single call covers the whole
+   * universe. Unknown ids are logged and omitted from the result.
    */
   async getRates(instrumentIds: number[], env: EtoroEnv = "paper"): Promise<EtoroRate[]> {
-    if (instrumentIds.length === 0) return [];
-    const chunks: number[][] = [];
-    for (let i = 0; i < instrumentIds.length; i += RATES_BATCH_SIZE) {
-      chunks.push(instrumentIds.slice(i, i + RATES_BATCH_SIZE));
-    }
+    const ids = [...new Set(instrumentIds)];
+    if (ids.length === 0) return [];
     const results: EtoroRate[] = [];
-    for (const chunk of chunks) {
+    for (let i = 0; i < ids.length; i += RATES_BATCH_SIZE) {
+      const chunk = ids.slice(i, i + RATES_BATCH_SIZE);
+      let data: RatesV2Response;
       try {
-        const data = await request<RatesResponse>(env, "/market-data/instruments/rates", {
+        data = await request<RatesV2Response>(env, "/api/v2/market-data/rates", {
           query: { instrumentIds: chunk.join(",") },
         });
-        for (const r of data.rates || []) {
-          results.push({
-            instrumentID: r.instrumentID,
-            bid: r.bid,
-            ask: r.ask,
-            close: r.lastExecution,
-            ts: r.date,
-          });
-        }
       } catch (e) {
-        // The chunk request failed — ONE bad ID inside takes the whole
-        // batch down. Fall back to per-ID requests so the rest of the
-        // chunk's instruments still get their rates.
-        // (Don't warn yet — most of the time the per-ID retries succeed
-        // for every ID and the chunk failure is just an eToro batch quirk
-        // for certain ID combinations. Only warn if per-ID also fails.)
-        const chunkErr = e instanceof Error ? e.message : String(e);
-        const failed: number[] = [];
-        let recovered = 0;
-        for (const id of chunk) {
-          try {
-            const single = await request<RatesResponse>(env, "/market-data/instruments/rates", {
-              query: { instrumentIds: String(id) },
-            });
-            for (const r of single.rates || []) {
-              results.push({
-                instrumentID: r.instrumentID,
-                bid: r.bid,
-                ask: r.ask,
-                close: r.lastExecution,
-                ts: r.date,
-              });
-              recovered++;
-            }
-          } catch {
-            failed.push(id);
-          }
+        // 404 = none of the ids resolved; nothing to return for this chunk
+        if (e instanceof EtoroAPIError && e.status === 404) {
+          console.warn(`rates: no rates for ids=[${chunk.join(",")}] env=${env}`);
+          continue;
         }
-        if (failed.length > 0) {
-          // Real data loss — surface for investigation
-          console.warn(`rates: dropped ids=[${failed.join(",")}] env=${env} (chunk err: ${chunkErr}; per-ID also failed)`);
-        }
-        // chunk-fail-but-per-ID-recovered case is silent — eToro batch
-        // quirk that the fallback fully handles.
-        void recovered;
+        throw e;
+      }
+      const seen = new Set<number>();
+      for (const r of data.results || []) {
+        if (r.bid == null || r.ask == null) continue;
+        seen.add(r.instrumentId);
+        results.push({
+          instrumentID: r.instrumentId,
+          bid: r.bid,
+          ask: r.ask,
+          ts: r.date ?? undefined,
+        });
+      }
+      const missing = chunk.filter((id) => !seen.has(id));
+      if (missing.length > 0) {
+        console.warn(`rates: dropped ids=[${missing.join(",")}] env=${env}`);
       }
     }
     return results;
+  },
+
+  /**
+   * GET /api/v2/market-data/instruments?symbols=BTC,GOLD,…
+   * Exact ticker lookup — replaces paging the full ~11k catalog when we
+   * only need our universe. Symbols eToro doesn't know are just absent.
+   */
+  async getInstrumentsBySymbols(symbols: string[], env: EtoroEnv = "paper"): Promise<InstrumentV2[]> {
+    if (symbols.length === 0) return [];
+    const out: InstrumentV2[] = [];
+    let pageToken: string | undefined;
+    for (let page = 0; page < 20; page++) {
+      let data: InstrumentsV2Response;
+      try {
+        data = await request<InstrumentsV2Response>(env, "/api/v2/market-data/instruments", {
+          query: { symbols: symbols.join(","), pageSize: 100, pageToken },
+        });
+      } catch (e) {
+        if (e instanceof EtoroAPIError && e.status === 404) break;  // none matched
+        throw e;
+      }
+      out.push(...(data.results || []));
+      if (!data.pagination?.hasNext || !data.pagination.nextPageToken) break;
+      pageToken = data.pagination.nextPageToken;
+    }
+    return out;
   },
 
   /**
@@ -456,6 +519,52 @@ export const etoro = {
         close: c.close,
         volume: c.volume,
       }));
+  },
+
+  // ── Trade history ──────────────────────────────────────────────
+  /**
+   * GET /trading/info/trade/history (real) | /trading/info/trade/demo/history
+   * Closed positions since `minDate` (YYYY-MM-DD, lookback < 1 year) with
+   * the ACTUAL close rate and realized P&L. Pages until a short page.
+   */
+  async getTradeHistory(
+    env: EtoroEnv,
+    minDate: string,
+    opts: { pageSize?: number; maxPages?: number } = {},
+  ): Promise<EtoroClosedTrade[]> {
+    const pageSize = opts.pageSize ?? 200;
+    const maxPages = opts.maxPages ?? 10;
+    const path = envToPath(env) === "demo"
+      ? "/trading/info/trade/demo/history"
+      : "/trading/info/trade/history";
+    const out: EtoroClosedTrade[] = [];
+    for (let page = 1; page <= maxPages; page++) {
+      const rows = await request<RawClosedTrade[]>(env, path, {
+        query: { minDate, page, pageSize },
+      });
+      const list = Array.isArray(rows) ? rows : [];
+      for (const r of list) {
+        out.push({
+          positionId: String(r.positionId),
+          orderId: String(r.orderId ?? ""),
+          instrumentId: Number(r.instrumentId),
+          isBuy: !!r.isBuy,
+          openRate: Number(r.openRate),
+          closeRate: Number(r.closeRate),
+          openTimestamp: r.openTimestamp,
+          closeTimestamp: r.closeTimestamp,
+          stopLossRate: Number(r.stopLossRate ?? 0),
+          takeProfitRate: Number(r.takeProfitRate ?? 0),
+          units: Number(r.units ?? 0),
+          investment: Number(r.investment ?? 0),
+          leverage: Number(r.leverage ?? 1),
+          netProfit: Number(r.netProfit ?? 0),
+          fees: Number(r.fees ?? 0),
+        });
+      }
+      if (list.length < pageSize) break;
+    }
+    return out;
   },
 
   // ── Trading ────────────────────────────────────────────────────
