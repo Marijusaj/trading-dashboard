@@ -53,6 +53,10 @@ function publicKey(): string {
   return k;
 }
 
+/** Retries for a 429, and the longest Retry-After we'll sleep for. */
+const RATE_LIMIT_RETRIES = 3;
+const RETRY_AFTER_CAP_SEC = 20;
+
 interface RequestOptions {
   method?: "GET" | "POST" | "PUT" | "DELETE";
   body?: unknown;
@@ -83,7 +87,9 @@ async function request<T>(
   if (body !== undefined) headers["Content-Type"] = "application/json";
 
   let lastErr: EtoroAPIError | null = null;
-  for (let attempt = 0; attempt <= retries; attempt++) {
+  // 429s get extra attempts: they clear once the rate window resets
+  let maxAttempts = retries;
+  for (let attempt = 0; attempt <= maxAttempts; attempt++) {
     const res = await fetch(url.toString(), {
       method,
       headers,
@@ -102,6 +108,7 @@ async function request<T>(
     }
 
     const errBody = await res.text();
+    if (res.status === 429) maxAttempts = Math.max(maxAttempts, RATE_LIMIT_RETRIES);
     lastErr = new EtoroAPIError(
       res.statusText || "Request failed",
       res.status,
@@ -109,8 +116,13 @@ async function request<T>(
       errBody.slice(0, 500),
     );
 
-    if (attempt < retries && (res.status === 429 || res.status >= 500)) {
-      const backoffMs = 500 * Math.pow(2, attempt) + Math.random() * 250;
+    if (attempt < maxAttempts && (res.status === 429 || res.status >= 500)) {
+      // On 429 honor eToro's Retry-After (the quota window resets within
+      // 60s), capped so a scan stays well inside the 300s function limit.
+      const retryAfterSec = Number(res.headers.get("retry-after"));
+      const backoffMs = res.status === 429 && retryAfterSec > 0
+        ? Math.min(retryAfterSec, RETRY_AFTER_CAP_SEC) * 1000 + Math.random() * 500
+        : 500 * Math.pow(2, attempt) + Math.random() * 250;
       await new Promise((r) => setTimeout(r, backoffMs));
       continue;
     }
