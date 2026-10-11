@@ -26,17 +26,17 @@ export interface UniverseEntry {
 
 export const UNIVERSE: UniverseEntry[] = [
   // ── Major crypto (low min: $10) ────────────────────────────────
-  { symbol: "BTC", display: "Bitcoin", assetClass: "crypto", thesis: "Macro bellwether — Francis bear flag thesis active", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },
+  { symbol: "BTC", display: "Bitcoin", assetClass: "crypto", thesis: "Macro bellwether — Francis abandoned the bear flag (May 2026); neutral, bearish again below ~$76k", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },
   { symbol: "ETH", display: "Ethereum", assetClass: "crypto", thesis: "Underperforming BTC, weak technicals per Francis", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },
-  { symbol: "TRX", display: "Tron", assetClass: "crypto", thesis: "Stablecoin rail thesis, $0.33 breakout watch", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },
-  { symbol: "SOL", display: "Solana", assetClass: "crypto", thesis: "Bear flag, -37% target per Francis", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },
-  { symbol: "XRP", display: "Ripple", assetClass: "crypto", thesis: "Broken support, sub-$1 target", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },
+  { symbol: "TRX", display: "Tron", assetClass: "crypto", thesis: "Stablecoin rail thesis — W-bottom neckline ~$0.32, targets $0.35 then $0.388; TRX/BTC outperformance", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },
+  { symbol: "SOL", display: "Solana", assetClass: "crypto", thesis: "Francis (Oct 2026): SOL/BTC at a local low, a \"chosen\" alt — expects upside, later a lower 3rd high then a sharp V-drop", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },
+  { symbol: "XRP", display: "Ripple", assetClass: "crypto", thesis: "H&S target made at $0.98 and turned; Francis (Oct 2026) long, HVF target $19.35 with interim pauses", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },
   { symbol: "BNB", display: "BNB", assetClass: "crypto", thesis: "Major exchange token, follows BTC", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },
   { symbol: "ADA", display: "Cardano", assetClass: "crypto", thesis: "Technically weak per Francis", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },
   { symbol: "DOGE", display: "Dogecoin", assetClass: "crypto", thesis: "High beta, Musk sentiment", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },
   { symbol: "AVAX", display: "Avalanche", assetClass: "crypto", thesis: "L1 competitor — SHORTS DISALLOWED on this eToro account (errorCode 747); long-only", shortAllowed: false, instrumentId: null, minSizeUsd: 10 },
-  { symbol: "LINK", display: "Chainlink", assetClass: "crypto", thesis: "Oracle infrastructure", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },
-  { symbol: "XLM", display: "Stellar", assetClass: "crypto", thesis: "Cross-border payment rail — XRP's closest peer; Francis covers the two together on devaluation setups", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },
+  { symbol: "LINK", display: "Chainlink", assetClass: "crypto", thesis: "Oracle infrastructure — named by Francis (Oct 2026) as a \"chosen\" alt for the alt run", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },
+  { symbol: "XLM", display: "Stellar", assetClass: "crypto", thesis: "Cross-border payment rail — XRP's closest peer; Francis (Oct 2026) names it a \"chosen\" alt", shortAllowed: true, instrumentId: null, minSizeUsd: 10 },
 
   // ── Commodity CFDs (min $1000 due to leverage requirement) ─────
   { symbol: "GOLD", display: "Gold", assetClass: "commodity", thesis: "Debasement hedge, $24K Francis target", shortAllowed: true, instrumentId: null, minSizeUsd: 1000 },

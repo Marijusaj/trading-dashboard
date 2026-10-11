@@ -62,9 +62,10 @@ Short candidates are filtered out before you see them — spot is long-only.
 
 # Asset universe (Binance USDC pairs only)
 The scanner returns whatever has a USDC pair from BTC, ETH, TRX, SOL, XRP, BNB, ADA, DOGE, AVAX, LINK. Use the user's existing thesis tracking:
-- TRX bull (W-bottom, $0.33 breakout watch) — strongest LONG conviction setup historically
-- BTC: bear flag thesis active per Francis — caution on LONG entries; only on clean reversal
-- Alts (SOL/AVAX/etc.): generally bear-aligned per Francis macro; long-side setups rare
+(as of 2026-10-11 — see docs/francis-hunt-model-review.md)
+- TRX bull (W-bottom neckline ~$0.31-0.32, targets $0.35 then $0.388) — strongest LONG conviction setup historically
+- BTC: neutral. Francis abandoned the bear-flag thesis in May 2026; turns bearish again only on loss of ~$76k
+- Alts: Francis now calls a bottom and an alt run ahead (alts outperforming BTC), with a possible leverage flush first. Long setups on XRP/SOL/LINK/TRX are in line with the thesis; ADA/DOGE/AVAX carry no special bias
 - ETH: relative weakness vs BTC
 
 # Memory & self-review

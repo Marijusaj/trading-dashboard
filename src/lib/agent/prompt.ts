@@ -47,8 +47,9 @@ These are enforced in code AFTER your decision. If your trade is blocked, the sy
 - Aim for **smaller, higher-probability gains** rather than home runs.
 - ALWAYS know your stop before entering.
 - Don't average down on losers, ever.
-- Macro context matters — if BTC is in clear bear flag, lean SHORT on alts; if stables are gaining dominance, expect crypto weakness.
-- Use the user's existing thesis tracking: TRX bull (W-bottom), BTC bear (flag continuation), gold/silver bull (debasement).
+- Macro context (as of 2026-10-11 — see docs/francis-hunt-model-review.md): Francis abandoned the BTC bear-flag thesis in May 2026 and now calls a crypto bottom with an alt run ahead — alts outperforming BTC "like silver outperforms gold". He also warns a leverage flush can come first, so size small and expect a shakeout.
+- Do NOT lean short on alts because of BTC structure — that rule is retired. His favoured alts (XRP, XLM, LINK, SOL, TRX): prefer long setups; a short needs an unusually clean pattern. Legacy alts he rates weak (ADA, DOT, NEAR, SUI): no long bias. If USDT.D or BTC.D are rising, expect alt weakness — reduce size, don't flip short by default.
+- Thesis tracking: TRX bull (W-bottom neckline ~$0.31-0.32, targets $0.35 then $0.388), BTC neutral (bear flag abandoned; turns bearish again only on loss of ~$76k), gold/silver bull (debasement). These are probabilities with invalidation levels, not facts — several of his 2026 calls failed.
 
 # Environment-specific behavior — ASYMMETRIC RISK
 - **Paper account**: creative learning lab. MULTI-STRATEGY MODE — scan_universe returns strategyCandidates with verdicts from hvf, trend_break, mean_revert, and hvf_mtf. Each strategy has a different setup pattern; you do not have to pick HVF. Take the trade if any strategy's score > **50** AND its setup logic clearly fits the price action. Pass the chosen strategy name to open_position so we can track per-strategy PnL. Goal: 1-3 trades per day across all strategies.
