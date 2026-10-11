@@ -98,6 +98,35 @@ Medium-high, Hunt's own words (FH-fb).
 - **Confluence:** Fibonacci 50 / 61.8, volume-by-price levels, OBV, and the higher-timeframe
   ("macro") funnel. These are confirmation only; no indicator defines the pattern. High.
 
+## 5b. Volume-by-price layer (HVF1 lesson, transcript matched to the owner's stills)
+
+These rules are Medium-high: Hunt's own words, spoken while drawing on the chart.
+
+- **Anchor** the volume profile at a significant breakout or low (BTC: the first close above
+  $3k), or at the cycle high for a bear-market profile, and run it to today. Use log scale on
+  big timeframes. The anchor changes the numbers but rarely the message.
+- **KLOS = high-volume nodes.** These are the levels "the market shows you", not round
+  numbers. Treat them as **zones** with hard and soft floors and ceilings, not lines.
+- **Value area = 70%** of the volume, leaving roughly 15% tails above and below.
+- **Voids & vacuums (V&V)** = low-volume gaps between nodes. Price crosses them fast ("easy,
+  quick, big profits"); entering a high-volume node ("heavy traffic") slows it down.
+- **Detector use:**
+  1. The funnel's trigger edge is better when it sits on a KLOS ("justified our access
+     level").
+  2. A setup is better when the path from entry to target runs through a void.
+  3. If a heavy node sits between entry and target, expect a stall there: treat it as an
+     interim or cut expected R.
+  4. The breakout candle often fires exactly where the profile drops away.
+- **Revisiting a heavily traded zone:** expect a skirmish and knock-back, a new wind-up
+  squeeze, a momentum break, then a relapse to retest the zone as support. Don't expect a
+  first-touch break.
+- **Blow-off tops are thin-volume** ("thin edge of a wedge", "on fumes"). Few traders got in
+  or out there.
+- **Continuation bias** is explicit: he does not trade the counter-move, even when it costs
+  him.
+- **Macro hook:** "BTC, the god market, permissions the recovery". Alts follow BTC's lead.
+  Trade liquid majors. This rule belongs to the weekly Macro Analyst.
+
 ## 6. Sizing and conduct (High — FH-jk, FH-tg)
 
 - "Cut your number of trades by three."
