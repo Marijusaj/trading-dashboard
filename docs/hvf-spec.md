@@ -13,6 +13,8 @@ Sources:
 - **[FH-jk]** Jay Kim Show #148 transcript (2020).
 - **[MT]** Mundotrading summaries of Hunt (2017).
 - **[RPT]** ratiopatterntrader (2013).
+- **[FH-hvf1]** Hunt's "HVF1" lesson: screenshots supplied by the owner (BTC 2017–2019,
+  recorded May 2019). Audio not yet transcribed.
 - **[UM]** "HVF Method — Under the Microscope", a community guide. Only its table of
   contents and page headers are visible.
 
@@ -35,6 +37,8 @@ Sources:
 | A clear prior trend is required. Setups out of choppy/flat markets "are rejected and cannot be HVFs" | High | FH-doc |
 | The pattern starts at the trend's exhaustion point (1H for bullish, 1L for inverted). Points are taken only after it | High | FH-doc |
 | Three alternating highs and lows. Each high is lower and each low higher than the previous ("we seek 3 alternating highs and lows") | High | FH-doc, RPT, UM |
+| ...but one edge may be **flat** (equal highs or lows). Hunt calls BTC's 2018 ~$6k base a "low-slung **flat-bottomed** inverted HVF", which broke down for a 60+ R trade. So the detector must accept a flat edge with tolerance; strict monotone on both edges is wrong | High | FH-hvf1 (annotated chart, ~11:30–15:19) |
+| The funnel's trigger edge usually sits on a **key level of significance (KLOS)**: a high-volume shelf on the volume-by-price histogram | Medium-high | FH-hvf1 (~4–10 min) |
 | Every point must be a real price swing. Horizontal levels take precedence over angled trend lines ("a trend line price level without corroboration of price action is irrelevant") | High | FH-doc |
 | It is a continuation pattern: trade in the direction of the prior trend | High | FH-doc, RPT, FH-fb ("it's continuation normally") |
 | Points may be **re-adjusted** while the pattern forms (a new 3L/2L replaces the old one) | Medium | UM (ToC: "re-adjustment of 3L / 2L point") |
@@ -86,6 +90,11 @@ Medium-high, Hunt's own words (FH-fb).
   allows bigger size. Medium, FH-tg.
 - **Blow-off → "slap in the face" → squeeze** marks the first setup of a new trend. That is
   how he traded the RUB reversal. Medium, FH-tg.
+- **KLOS via volume-by-price:** high-volume price shelves are the levels the market reacts
+  to. Price travels fast through thin zones and stalls in "heavy traffic", so targets and
+  interims that land in heavy traffic are likelier to pause there. Medium-high, FH-hvf1.
+  The meaning of the percentages he writes on the profile (15% / 30% / 70% / 5–10%) still
+  needs the audio.
 - **Confluence:** Fibonacci 50 / 61.8, volume-by-price levels, OBV, and the higher-timeframe
   ("macro") funnel. These are confirmation only; no indicator defines the pattern. High.
 
