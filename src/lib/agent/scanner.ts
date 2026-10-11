@@ -10,6 +10,7 @@
 import { etoro } from "@/lib/etoro/client";
 import { db } from "@/lib/neon";
 import { analyzeHVF, type HVFAnalysis, type OHLC } from "./hvf";
+import { analyzeHvfFunnels, actionableSetup, type HvfFunnelAnalysis, type HvfSetup } from "./hvf-funnel";
 import { UNIVERSE, type UniverseEntry } from "./universe";
 import { checkMarketHours, type AssetClass } from "./market-hours";
 import type { Strategy, StrategyCandidate, StrategyContext } from "./strategies/types";
@@ -23,7 +24,12 @@ export interface ScanCandidate {
   thesis: string;
   shortAllowed: boolean;
   currentPrice: number;
+  /** Legacy squeeze score (ATR/EMA/volume). NOT Hunt's HVF — kept for the auto-managers. */
   hvf: HVFAnalysis;
+  /** Hunt's actual HVF, computed from the candles: 1H/1L..3H/3L funnels with levels. */
+  hvfFunnel: HvfFunnelAnalysis;
+  /** A funnel the agent can act on right now (triggered, still near entry, R:R ≥ 2), else null. */
+  hvfSetup: HvfSetup | null;
   marketIsOpen: boolean;
   marketHoursReason: string;
   /** Populated when opts.strategies is provided. Contains the result of
@@ -149,6 +155,8 @@ export async function scanUniverse(opts: ScanOptions = {}): Promise<ScanCandidat
 
       const rate = rates[0];
       const currentPrice = rate ? (rate.bid + rate.ask) / 2 : candles[candles.length - 1].close;
+      const hvfFunnel = analyzeHvfFunnels(candles);
+      const hvfSetup = actionableSetup(hvfFunnel, currentPrice);
       const hours = checkMarketHours(entry.assetClass as AssetClass);
 
       // Multi-strategy mode: run every provided strategy in addition to HVF.
@@ -186,6 +194,8 @@ export async function scanUniverse(opts: ScanOptions = {}): Promise<ScanCandidat
         shortAllowed: entry.shortAllowed,
         currentPrice,
         hvf,
+        hvfFunnel,
+        hvfSetup,
         marketIsOpen: hours.isOpen,
         marketHoursReason: hours.reason,
         strategyCandidates,
@@ -197,7 +207,32 @@ export async function scanUniverse(opts: ScanOptions = {}): Promise<ScanCandidat
   };
 
   const results = await mapPool(universe, SCAN_CONCURRENCY, scanOne);
+  // Actionable HVF setups first, then live funnels by funnel score, then the legacy squeeze score.
+  const rank = (c: ScanCandidate) => (c.hvfSetup ? 2 : c.hvfFunnel.best && ["forming", "triggered"].includes(c.hvfFunnel.best.status) ? 1 : 0);
   return results
     .filter((r): r is ScanCandidate => r !== null)
-    .sort((a, b) => b.hvf.score - a.hvf.score);
+    .sort((a, b) =>
+      rank(b) - rank(a) ||
+      (b.hvfFunnel.best?.score ?? 0) - (a.hvfFunnel.best?.score ?? 0) ||
+      b.hvf.score - a.hvf.score);
+}
+
+/** Run Hunt's HVF detector on one symbol at any timeframe — backs the agent's analyze_hvf tool. */
+export async function analyzeHvfForSymbol(
+  entry: UniverseEntry,
+  timeframe: keyof typeof TIMEFRAME_TO_ETORO = "1d",
+  candleCount = 250,
+): Promise<{ instrumentId: number; currentPrice: number; candles: number; analysis: HvfFunnelAnalysis; setup: HvfSetup | null } | { error: string }> {
+  const instrumentId = await resolveInstrument(entry);
+  if (!instrumentId) return { error: `No instrument ID cached for ${entry.symbol}` };
+  const period = TIMEFRAME_TO_ETORO[timeframe] || "OneDay";
+  const [candles, rates] = await Promise.all([
+    getCandlesFor(instrumentId, period, candleCount),
+    etoro.getRates([instrumentId], "paper"),
+  ]);
+  if (candles.length < 40) return { error: `Only ${candles.length} ${timeframe} candles for ${entry.symbol} — need 40+` };
+  const rate = rates[0];
+  const currentPrice = rate ? (rate.bid + rate.ask) / 2 : candles[candles.length - 1].close;
+  const analysis = analyzeHvfFunnels(candles);
+  return { instrumentId, currentPrice, candles: candles.length, analysis, setup: actionableSetup(analysis, currentPrice) };
 }

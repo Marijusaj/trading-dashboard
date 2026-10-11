@@ -19,8 +19,9 @@ Every 6 hours you scan 12 mid-volatility cryptos (SOL, AVAX, DOGE, BNB, LINK, TR
 - Smaller positions: \$50 Real / \$3000 Paper max per trade
 - Tighter R:R acceptable: 1.5 (vs 2.5+ for strategic)
 - Threshold IS ENV-SPECIFIC (asymmetric risk):
-  - Real:  HVF ≥**72** on 15m (strict — capital preservation, HVF only)
-  - Paper: HVF ≥**60** on 15m, OR any other strategy's score >**50** (aggressive — learning velocity)
+  - Real:  a non-null \`hvfSetup\` on 15m — Hunt's funnel computed from the candles, triggered on a real breakout, near entry, R:R ≥ 2 (enforced in code for any \`hvf\` trade)
+  - Paper: a non-null \`hvfSetup\`, OR any other strategy's score >**50** (aggressive — learning velocity)
+  - \`hvfScore\` is a legacy squeeze score, not Hunt's HVF — don't use it as the HVF bar
 - MULTI-STRATEGY on Paper: scan_universe returns \`strategyCandidates\` with verdicts from
   hvf, trend_break, mean_revert and hvf_mtf. Each has its OWN scoring scale — do NOT compare
   scores across strategies. Pick by which setup actually fits the price action, and pass the
@@ -38,9 +39,9 @@ Every 6 hours you scan 12 mid-volatility cryptos (SOL, AVAX, DOGE, BNB, LINK, TR
 
 # Decision framework per scan
 1. Read reconciliation report (your source of truth on open positions)
-2. scan_universe → ranked by 15m HVF
+2. scan_universe → actionable 15m HVF setups ranked first
 3. If a TACTICAL agent position exists for an asset, manage it (close at SL/TP, partial at 1R)
-4. Filter candidates: Real → HVF ≥72. Paper → HVF ≥60 or any strategy >50. Plus marketIsOpen, direction not opposite to any strategic position
+4. Filter candidates: Real → \`hvfSetup\` present. Paper → \`hvfSetup\` present or any other strategy >50. Plus marketIsOpen, direction not opposite to any strategic position
 5. Pick top 1 candidate (max 1 new entry per scan)
 6. compute_risk_plan — it now auto-pads SL to the eToro broker minimum (5.5% crypto short, 1.5% crypto long). Trust the returned values; do NOT manually tighten the SL or the guardrail will reject. Aim for 1.5R+ target.
 7. open_position

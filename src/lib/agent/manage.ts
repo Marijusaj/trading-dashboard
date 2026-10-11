@@ -30,7 +30,13 @@ interface OpenTradeRow {
   stop_loss: string | number;
   take_profit: string | number;
   opened_at: string;
+  strategy: string | null;
 }
+
+/** HVF trades opened from this date were entered on a computed funnel (hvf-funnel.ts) with a
+ *  structural stop and an AMP1 target. Hunt manages those by stop and target only, so the legacy
+ *  squeeze-score flip/collapse auto-closes must not cut them. Older trades keep the legacy rules. */
+const FUNNEL_HVF_LIVE_FROM = Date.parse("2026-10-12T00:00:00Z");
 
 export interface ManageReport {
   scanned: number;
@@ -54,7 +60,7 @@ export async function autoManageOpenPositions(
 
   const trades = (await sql`
     SELECT id, environment, agent_kind, etoro_position_id, asset, instrument_id,
-           side, entry_price, size_usd, stop_loss, take_profit, opened_at
+           side, entry_price, size_usd, stop_loss, take_profit, opened_at, strategy
       FROM trades
      WHERE environment = ${env}
        AND agent_kind  = ${agentKind}
@@ -84,8 +90,10 @@ export async function autoManageOpenPositions(
 
       const ageHours = (Date.now() - new Date(t.opened_at).getTime()) / 3_600_000;
 
+      const funnelManaged = (t.strategy ?? "hvf") === "hvf" && Date.parse(t.opened_at) >= FUNNEL_HVF_LIVE_FROM;
+
       // ── Trigger 1: HVF direction flip ────────────────────────
-      if (hvf && hvf.direction !== "neutral" && hvf.direction !== t.side) {
+      if (!funnelManaged && hvf && hvf.direction !== "neutral" && hvf.direction !== t.side) {
         const reason = `Signal flipped — opened ${t.side}, current HVF dir=${hvf.direction} (score ${hvf.score.toFixed(0)})`;
         await closeAndLog(t, reason, "agent_close", report);
         continue;
@@ -94,7 +102,7 @@ export async function autoManageOpenPositions(
       // ── Trigger 2: HVF score collapse (only for tactical) ─────
       // Strategic uses macro thesis, doesn't care if 1d HVF dipped.
       // Tactical lives and dies by 15m HVF — collapse = exit.
-      if (agentKind === "tactical" && hvf && hvf.score < 35) {
+      if (!funnelManaged && agentKind === "tactical" && hvf && hvf.score < 35) {
         const reason = `HVF collapsed — entry needed >=70, current ${hvf.score.toFixed(0)} (signal gone)`;
         await closeAndLog(t, reason, "agent_close", report);
         continue;
@@ -120,7 +128,9 @@ export async function autoManageOpenPositions(
       report.held.push({
         id: t.id,
         asset: t.asset,
-        reason: hvf
+        reason: funnelManaged
+          ? `HVF funnel trade — managed by its 3L stop and AMP1 target`
+          : hvf
           ? `HVF dir=${hvf.direction} score=${hvf.score.toFixed(0)} — still aligned`
           : `Insufficient candle data to re-score`,
       });

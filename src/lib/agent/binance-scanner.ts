@@ -6,6 +6,7 @@
 import { binance, type BinanceInterval } from "@/lib/binance/client";
 import { binanceSymbol } from "@/lib/binance/symbols";
 import { analyzeHVF, type OHLC } from "./hvf";
+import { analyzeHvfFunnels, actionableSetup } from "./hvf-funnel";
 import { UNIVERSE, type UniverseEntry } from "./universe";
 import type { ScanCandidate } from "./scanner";
 import type { Strategy, StrategyCandidate, StrategyContext } from "./strategies/types";
@@ -52,6 +53,9 @@ export async function scanBinanceUniverse(
       if (!hvf) return null;
 
       const currentPrice = klines[klines.length - 1].close;
+      const hvfFunnel = analyzeHvfFunnels(ohlc);
+      const setup = actionableSetup(hvfFunnel, currentPrice);
+      const hvfSetup = setup && setup.direction === "long" ? setup : null; // spot: long only
 
       // Multi-strategy mode. Binance spot is long-only, so short
       // candidates are dropped regardless of strategy verdict.
@@ -87,6 +91,8 @@ export async function scanBinanceUniverse(
         shortAllowed: false,        // spot can't short
         currentPrice,
         hvf,
+        hvfFunnel,
+        hvfSetup,
         marketIsOpen: true,
         marketHoursReason: "binance spot 24/7",
         strategyCandidates,
