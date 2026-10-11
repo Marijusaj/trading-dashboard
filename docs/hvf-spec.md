@@ -1,6 +1,6 @@
 # HVF (Hunt Volatility Funnel) — working spec for the detector
 
-Status: **draft, not yet coded.** Every rule carries a confidence level and its source.
+Status: **implemented** in `src/lib/agent/hvf-funnel.ts` (2026-10-11). Open questions are in §7. Every rule carries a confidence level and its source.
 Rules below **High** must be confirmed against Francis Hunt's own annotated charts
 before the detector depends on them. Compiled 2026-10-11.
 
@@ -15,6 +15,7 @@ Sources:
 - **[RPT]** ratiopatterntrader (2013).
 - **[FH-hvf1]** Hunt's "HVF1" lesson: screenshots supplied by the owner (BTC 2017–2019,
   recorded May 2019). Audio not yet transcribed.
+- **[FH-hvf2]** Hunt's "HVF2" lesson (Factom/BTC, June 2017): transcript and a still supplied by the owner.
 - **[UM]** "HVF Method — Under the Microscope", a community guide. Only its table of
   contents and page headers are visible.
 
@@ -127,6 +128,46 @@ These rules are Medium-high: Hunt's own words, spoken while drawing on the chart
 - **Macro hook:** "BTC, the god market, permissions the recovery". Alts follow BTC's lead.
   Trade liquid majors. This rule belongs to the weekly Macro Analyst.
 
+## 5c. From the HVF2 lesson (Hunt's own words — Medium-high)
+
+- **The primer is the real entry.** "Squeeze within the squeeze… that was your actual break of the
+  main pattern." The detector nests same-direction funnels inside the parent's second-swing band
+  and reports them as `primer`.
+- **The entry line is "the axis".** "The 0.4 round number is the axis… high three and low three,
+  and you project up from there." This confirms the target projects from the 3H/3L zone.
+- **Interims cause pullbacks.** "Run up almost to the second interim, pulled back to the first,
+  another run up." After the second interim: "be cautioned against charging in… you may just get
+  straight into a pullback." The detector sets `interim2Hit`, and those setups are no longer
+  actionable.
+- **Legacy targets stay live.** An old funnel's target "ran straight through this high" much
+  later. The detector lists them as `legacyTargets`.
+- **Point selection matters.** A student's funnel "was a bit wide", which gave a different
+  target.
+- **Process.** Take money at the target, sit out the pullback, re-enter on the next setup, and
+  keep the money elsewhere in between.
+
+## 5d. First evidence from our own data (2026-10-11)
+
+Rough tally, not a backtest: 88 funnels that resolved, from about 1,000 candles each of 12
+coins, on 1d and 4h. Entry is assumed at the funnel level, with no fees or slippage.
+
+| Filter | n | Hit rate | Expectancy |
+|---|---|---|---|
+| All funnels | 88 | 33% | 0.00 R |
+| R:R ≥ 2 | 44 | 25% | 0.00 R |
+| **Trigger looks real** (volume > average, close near the extreme) | 46 | 39% | **+0.23 R** |
+| **R:R ≥ 2 and trigger looks real** | 23 | 30% | **+0.27 R** |
+| Trigger on KLOS | 79 | 33% | 0.01 R |
+| Shorts / longs | 50 / 38 | 38% / 26% | +0.07 / −0.09 R |
+
+What we did with it:
+- Hunt's own breakout-quality rule is the only filter with an edge. `actionableSetup` now
+  requires the trigger not to be weak.
+- The KLOS flag fires on 90% of funnels, so as built it carries no information. The
+  high-volume threshold needs tightening; see §7.
+- The samples are small. The Reviewer agent should keep extending this table with live
+  outcomes.
+
 ## 6. Sizing and conduct (High — FH-jk, FH-tg)
 
 - "Cut your number of trades by three."
@@ -136,7 +177,14 @@ These rules are Medium-high: Hunt's own words, spoken while drawing on the chart
 - Don't tinker with a running macro trade. Check yourself with "would I reverse here?"
 - Scale in small at key levels on pullbacks, using limit orders.
 
-## 7. Still to confirm from Hunt's own charts
+## 7. Still to confirm or build
+
+- KLOS detection is too broad: 79 of 88 funnels "trigger on a key level". Tighten it to real
+  volume peaks.
+- Pending entry orders: Hunt rests a buy-stop at 3H. eToro here is market-only, so we enter
+  after the trigger, within 25% of the way to target.
+
+From Hunt's own charts:
 
 1. First-interim formula.
 2. Validity rules for 2H/3H and the "not too big an impulse" limit.
