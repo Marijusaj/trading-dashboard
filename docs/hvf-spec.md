@@ -13,9 +13,11 @@ Sources:
 - **[FH-jk]** Jay Kim Show #148 transcript (2020).
 - **[MT]** Mundotrading summaries of Hunt (2017).
 - **[RPT]** ratiopatterntrader (2013).
-- **[FH-hvf1]** Hunt's "HVF1" lesson: screenshots supplied by the owner (BTC 2017–2019,
-  recorded May 2019). Audio not yet transcribed.
+- **[FH-hvf1]** Hunt's "HVF1" lesson (BTC 2017–2019, recorded May 2019): transcript and stills
+  supplied by the owner, matched by timestamp.
 - **[FH-hvf2]** Hunt's "HVF2" lesson (Factom/BTC, June 2017): transcript and a still supplied by the owner.
+- Transcripts live in `docs/sources/hunt/` on the owner's machine. They are git-ignored, so
+  third-party content is never published.
 - **[UM]** "HVF Method — Under the Microscope", a community guide. Only its table of
   contents and page headers are visible.
 
