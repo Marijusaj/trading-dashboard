@@ -106,5 +106,8 @@ export async function scanBinanceUniverse(
   const results = await Promise.all(tasks);
   return results
     .filter((r): r is ScanCandidate => r !== null)
-    .sort((a, b) => b.hvf.score - a.hvf.score);
+    .sort((a, b) =>
+      (b.hvfSetup ? 1 : 0) - (a.hvfSetup ? 1 : 0) ||
+      (b.hvfFunnel.best?.score ?? 0) - (a.hvfFunnel.best?.score ?? 0) ||
+      b.hvf.score - a.hvf.score);
 }

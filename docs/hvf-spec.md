@@ -160,6 +160,13 @@ coins, on 1d and 4h. Entry is assumed at the funnel level, with no fees or slipp
 | Trigger on KLOS | 79 | 33% | 0.01 R |
 | Shorts / longs | 50 / 38 | 38% / 26% | +0.07 / −0.09 R |
 
+**Key levels, revisited (2026-10-13).** The first KLOS flag fired on 90% of funnels because the
+profile included the funnel's own bars: a squeeze stacks volume inside itself. KLOS are now the 5
+largest volume peaks in the history before the funnel's first point. The flag now fires on 39 of 85
+funnels, but shows no edge: on a key level −0.02 R, off one −0.08 R, and real trigger on vs off a
+key level +0.10 / +0.15 R (n = 18–43). It stays as information for the agent and is not used as a
+filter.
+
 What we did with it:
 - Hunt's own breakout-quality rule is the only filter with an edge. `actionableSetup` now
   requires the trigger not to be weak.
@@ -179,10 +186,11 @@ What we did with it:
 
 ## 7. Still to confirm or build
 
-- KLOS detection is too broad: 79 of 88 funnels "trigger on a key level". Tighten it to real
-  volume peaks.
-- Pending entry orders: Hunt rests a buy-stop at 3H. eToro here is market-only, so we enter
-  after the trigger, within 25% of the way to target.
+- **Pending entry orders.** Hunt rests a buy-stop at 3H. eToro's resting orders (v1
+  `limit-orders`, v2 `orders` with `orderType: mit`) only trigger at a price *better* than
+  current: below price for longs, above for shorts. So a breakout buy-stop can't be placed. What
+  is possible is Hunt's **"second chance"** entry: after the trigger, rest a buy MIT back at 3H
+  with the stop at 3L, filled only on a retest. Not built; it needs the owner's decision.
 
 From Hunt's own charts:
 

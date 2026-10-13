@@ -29,6 +29,10 @@ export interface BinanceOpenRequest {
    *  Defaults to 'hvf'. */
   strategy?: StrategyName;
   agentKind?: AgentKind;
+  /** Funnel stop/target for HVF trades. Binance can't hold them, so binance-manage enforces
+   *  them each scan. Omitted → synthetic levels used only for R-multiple math. */
+  stopLoss?: number;
+  takeProfit?: number;
 }
 
 export interface BinanceOpenResult {
@@ -79,8 +83,8 @@ export async function openBinanceTrade(req: BinanceOpenRequest): Promise<Binance
       guardrailViolation: null,
     };
   }
-  const syntheticSL = currentPrice * 0.5;
-  const syntheticTP = currentPrice * 2.0;
+  const syntheticSL = req.stopLoss ?? currentPrice * 0.5;
+  const syntheticTP = req.takeProfit ?? currentPrice * 2.0;
 
   // Guardrail check (size, daily loss, cooldown, R:R, etc.)
   const proposed: ProposedTrade = {

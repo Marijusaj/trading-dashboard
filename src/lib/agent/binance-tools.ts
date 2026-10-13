@@ -11,6 +11,7 @@ import { scanBinanceUniverse } from "./binance-scanner";
 import { openBinanceTrade, closeBinanceTrade } from "./binance-execute";
 import { recordObservationDecision, sanitizeReasoning } from "./execute";
 import type { ScanCandidate } from "./scanner";
+import { summarizeFunnel } from "./hvf-funnel";
 import type { Strategy, StrategyName } from "./strategies/types";
 
 export interface BinanceToolContext {
@@ -26,7 +27,10 @@ export const BINANCE_TOOL_DEFS: Anthropic.Tool[] = [
   {
     name: "scan_universe",
     description:
-      "Scan all universe symbols that have a Binance USDC pair. Returns HVF analysis on daily candles, ranked by score. Spot long-only — no shorts available on Binance. " +
+      "Scan all universe symbols that have a Binance USDC pair, on daily candles. Spot long-only — no shorts available on Binance. " +
+      "`hvfFunnel` is Francis Hunt's actual HVF computed from the candles (1H..3L points, entry 3H, stop 3L, target AMP1 from midway, status). " +
+      "`hvfSetup` is non-null only for a long funnel that can be acted on NOW (triggered on a real breakout, near entry, R:R >= 2). " +
+      "`hvfScore` is a LEGACY squeeze score — not Hunt's HVF. " +
       "In multi-strategy mode ALSO returns `strategyCandidates`: verdicts from every enabled strategy (hvf, trend_break, mean_revert, hvf_mtf). " +
       "Each strategy has its OWN scoring scale — do not compare scores across strategies. Pick the one whose setup fits the price action.",
     input_schema: { type: "object", properties: {}, required: [] },
@@ -153,6 +157,15 @@ export async function handleBinanceToolCall(
         display: c.display,
         thesis: c.thesis,
         currentPrice: c.currentPrice,
+        hvfSetup: c.hvfSetup && {
+          via: c.hvfSetup.via,
+          stop: c.hvfSetup.stop,
+          target: c.hvfSetup.target,
+          interim2: c.hvfSetup.funnel.levels.interim2,
+          rewardRiskFromCurrent: c.hvfSetup.rewardRisk,
+          funnelScore: c.hvfSetup.funnel.score,
+        },
+        hvfFunnel: c.hvfFunnel.best ? summarizeFunnel(c.hvfFunnel.best) : null,
         hvfScore: c.hvf.score,
         direction: c.hvf.direction,
         components: c.hvf.components,
@@ -259,6 +272,16 @@ export async function handleBinanceToolCall(
         input.strategy && VALID_STRATS.has(input.strategy as StrategyName)
           ? (input.strategy as StrategyName)
           : "hvf";
+      // A trade labelled "hvf" must have Hunt's funnel behind it — computed, not asserted.
+      if (strategy === "hvf" && !cand.hvfSetup) {
+        return {
+          error: `No actionable HVF long setup for ${input.symbol}. ` +
+            (cand.hvfFunnel.best
+              ? `Best funnel is ${cand.hvfFunnel.best.direction} / ${cand.hvfFunnel.best.status} (entry ${cand.hvfFunnel.best.levels.entry}).`
+              : "No funnel found in the candles.") +
+            " HVF trades require a triggered funnel still near its entry with R:R >= 2.",
+        };
+      }
       const result = await openBinanceTrade({
         asset: input.symbol,
         sizeUsd: Number(input.sizeUsd),
@@ -267,6 +290,8 @@ export async function handleBinanceToolCall(
         conviction: input.conviction,
         agentKind: "strategic",
         strategy,
+        stopLoss: strategy === "hvf" ? cand.hvfSetup?.stop : undefined,
+        takeProfit: strategy === "hvf" ? cand.hvfSetup?.target : undefined,
       });
       return result;
     }

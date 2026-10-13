@@ -145,6 +145,7 @@ export const ASSUMPTIONS: string[] = [
   "Invalidated if a candle CLOSES beyond 3L (3H for inverted) before the trigger",
   "Stale if still forming more than 2× the funnel's own length after 3L",
   "First interim not computed — formula unknown",
+  "Volume context (key levels, voids) uses only candles before the funnel's first point; key levels = the 5 largest volume peaks",
   "Primer = a same-direction funnel whose 1st swing sits inside the parent's 2nd-swing band, starting after the parent's 2nd swing",
 ];
 
@@ -253,9 +254,38 @@ export function buildVolumeProfile(candles: Candle[]): VolumeProfile | null {
     poc: Math.sqrt(edge(poc) * edge(poc + 1)),
     valueAreaLow: edge(vaLo),
     valueAreaHigh: edge(vaHi + 1),
-    hvnZones: runs((v) => v >= mean * 1.2),
+    hvnZones: volumePeaks(bins, edge, total),
     voidZones: runs((v) => v <= mean * 0.5),
   };
+}
+
+const PEAK_RADIUS = 3;          // a peak must be the max within ±3 bins
+const MAX_PEAKS = 5;            // Hunt's "Manhattans on their side": a handful, not every busy bin
+const PEAK_SHOULDER = 0.6;      // zone extends while volume stays ≥ 60% of the peak
+
+/** Key levels of significance = the few real humps in the profile, each widened to its shoulders. */
+function volumePeaks(bins: number[], edge: (i: number) => number, total: number): VolumeZone[] {
+  const median = [...bins].sort((a, b) => a - b)[Math.floor(bins.length / 2)];
+  const peaks: number[] = [];
+  for (let i = 0; i < bins.length; i++) {
+    const lo = Math.max(0, i - PEAK_RADIUS);
+    const hi = Math.min(bins.length - 1, i + PEAK_RADIUS);
+    let isMax = bins[i] > median * 1.5;
+    for (let j = lo; j <= hi && isMax; j++) if (j !== i && bins[j] > bins[i]) isMax = false;
+    if (isMax) peaks.push(i);
+  }
+  return peaks
+    .sort((a, b) => bins[b] - bins[a])
+    .slice(0, MAX_PEAKS)
+    .map((p) => {
+      let a = p;
+      let b = p;
+      while (a > 0 && bins[a - 1] >= bins[p] * PEAK_SHOULDER) a--;
+      while (b < bins.length - 1 && bins[b + 1] >= bins[p] * PEAK_SHOULDER) b++;
+      const vol = bins.slice(a, b + 1).reduce((s, v) => s + v, 0);
+      return { low: edge(a), high: edge(b + 1), share: vol / total };
+    })
+    .sort((x, y) => x.low - y.low);
 }
 
 function overlap(a1: number, a2: number, b1: number, b2: number): number {
@@ -332,7 +362,7 @@ function searchBullish(candles: Candle[]): RawFunnel[] {
 // ────────────────────────────────────────────────────────────────────
 
 /** `candles` is the series the funnel was found in (mirrored for shorts); `realCandles` is the original. */
-function toFunnel(raw: RawFunnel, candles: Candle[], realCandles: Candle[], short: boolean, profile: VolumeProfile | null): HvfFunnel {
+function toFunnel(raw: RawFunnel, candles: Candle[], realCandles: Candle[], short: boolean): HvfFunnel {
   const sign = short ? -1 : 1;
   const [h1, l1, h2, l2, h3, l3] = raw.p;
   const pt = (p: Pivot): FunnelPoint => ({ index: p.index, time: candles[p.index].time, price: sig(p.price * sign) });
@@ -393,6 +423,11 @@ function toFunnel(raw: RawFunnel, candles: Candle[], realCandles: Candle[], shor
     interim2: interim2Raw > entry ? real(interim2Raw) : null,
   };
 
+  // Volume context comes from the history BEFORE the funnel began. A squeeze stacks volume
+  // inside itself, so a profile that includes the funnel's own bars makes almost every trigger
+  // look like a key level. Hunt's KLOS are levels the market built earlier (HVF1: the 2018 base
+  // sat on volume stacked months before).
+  const profile = buildVolumeProfile(realCandles.slice(0, raw.p[0].index));
   let volume: HvfFunnel["volume"] = null;
   if (profile) {
     const e = levels.entry;
@@ -488,8 +523,8 @@ export function analyzeHvfFunnels(candles: Candle[]): HvfFunnelAnalysis {
   const profile = buildVolumeProfile(candles);
   const mirrored = mirror(candles);
   const all = [
-    ...searchBullish(candles).map((r) => toFunnel(r, candles, candles, false, profile)),
-    ...searchBullish(mirrored).map((r) => toFunnel(r, mirrored, candles, true, profile)),
+    ...searchBullish(candles).map((r) => toFunnel(r, candles, candles, false)),
+    ...searchBullish(mirrored).map((r) => toFunnel(r, mirrored, candles, true)),
   ];
   if (all.length === 0) return { ...empty, profile };
 
