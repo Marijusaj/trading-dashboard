@@ -6,6 +6,10 @@
 //   1. HVF direction flip — opened long, current HVF says short → close
 //   2. HVF score collapse — current HVF score < 35 → close
 //   3. Time stop — older than 7 days AND not in profit → close
+//
+// HVF trades opened on a computed funnel (stored stop is the funnel's, not the synthetic 50%)
+// skip 1-3 and are closed only when price has touched their stop or target since entry —
+// Hunt's resting orders, enforced here because Binance spot holds no SL/TP for us.
 
 import { db } from "@/lib/neon";
 import { binance } from "@/lib/binance/client";
@@ -19,6 +23,9 @@ interface OpenBinanceTradeRow {
   entry_price: string | number;
   units: string | number;
   opened_at: string;
+  stop_loss: string | number | null;
+  take_profit: string | number | null;
+  strategy: string | null;
 }
 
 export interface BinanceManageReport {
@@ -37,7 +44,7 @@ export async function autoManageBinancePositions(): Promise<BinanceManageReport>
   const sql = db();
 
   const trades = (await sql`
-    SELECT id, asset, entry_price, units, opened_at
+    SELECT id, asset, entry_price, units, opened_at, stop_loss, take_profit, strategy
       FROM trades
      WHERE environment = 'binance' AND status = 'open'
   `) as unknown as OpenBinanceTradeRow[];
@@ -59,6 +66,30 @@ export async function autoManageBinancePositions(): Promise<BinanceManageReport>
       const hvf = ohlc.length >= 60 ? analyzeHVF(ohlc) : null;
 
       const ageHours = (Date.now() - new Date(t.opened_at).getTime()) / 3_600_000;
+
+      // Funnel-managed HVF trade: stop/target only.
+      const entry = Number(t.entry_price);
+      const stop = Number(t.stop_loss);
+      const target = Number(t.take_profit);
+      const funnelManaged = (t.strategy ?? "hvf") === "hvf" && stop > entry * 0.55 && target > entry;
+      if (funnelManaged) {
+        const openedSec = Math.floor(new Date(t.opened_at).getTime() / 1000);
+        const since = ohlc.filter((c) => c.time + 86_400 > openedSec);
+        const lowSince = Math.min(...since.map((c) => c.low));
+        const highSince = Math.max(...since.map((c) => c.high));
+        const hit: "stop" | "target" | null = lowSince <= stop ? "stop" : highSince >= target ? "target" : null;
+        if (hit) {
+          const reason = hit === "stop"
+            ? `HVF stop ${stop} touched (low since entry ${lowSince})`
+            : `HVF target ${target} reached (high since entry ${highSince})`;
+          const r = await closeBinanceTrade({ tradeId: t.id, reason: hit, reasoning: `AUTO-MANAGED: ${reason}` });
+          if (r.ok) report.closed.push({ id: t.id, asset: t.asset, reason });
+          else report.errors.push(`close ${t.id}: ${r.message}`);
+        } else {
+          report.held.push({ id: t.id, asset: t.asset, reason: `HVF funnel trade — stop ${stop}, target ${target} not touched` });
+        }
+        continue;
+      }
 
       // Trigger 1: HVF direction flip — long position but HVF says short
       if (hvf && hvf.direction === "short") {
