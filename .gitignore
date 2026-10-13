@@ -36,6 +36,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# third-party source material (Francis Hunt transcripts) — kept local, never published
+/docs/sources/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

@@ -1,6 +1,6 @@
 # Francis Hunt model — review of what the agent believes (2026-10-11)
 
-Sources: the five transcripts in the local `docs/` folder (not committed), five
+Sources: the five transcripts in `docs/sources/hunt/` (kept local, git-ignored), five
 chart screenshots, and public write-ups of the HVF method (links at the end).
 Prices checked 2026-10-11 (CoinGecko): BTC $83.0k, BTC.D 59.7%, USDT.D 6.6%,
 TRX $0.330, XRP $1.39, SOL $109, LINK $12.9, XLM $0.198, HBAR $0.092, ZEC $1,232.
