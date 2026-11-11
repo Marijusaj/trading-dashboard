@@ -11,6 +11,19 @@ import { openTrade, closeTrade, recordObservationDecision, sanitizeReasoning, ty
 import type { UniverseEntry } from "./universe";
 import type { AgentEnvironment } from "@/lib/neon";
 import type { Strategy, StrategyName } from "./strategies/types";
+import { usesManagedStops, MANAGED_MIN_SL_PCT } from "./guardrails";
+
+/** Options for a scan run on behalf of this agent context. */
+export function scanOptionsFor(ctx: AgentToolContext): ScanOptions {
+  return {
+    universe: ctx.overrides?.universe,
+    timeframe: ctx.overrides?.timeframe,
+    strategies: ctx.overrides?.strategies,
+    minStopPct: usesManagedStops(ctx.environment)
+      ? { long: MANAGED_MIN_SL_PCT, short: MANAGED_MIN_SL_PCT }
+      : undefined,
+  };
+}
 
 export interface AgentToolContext {
   environment: AgentEnvironment;
@@ -264,11 +277,7 @@ export async function handleToolCall(
 ): Promise<unknown> {
   switch (toolName) {
     case "scan_universe": {
-      const results = await scanUniverse({
-        universe: ctx.overrides?.universe,
-        timeframe: ctx.overrides?.timeframe,
-        strategies: ctx.overrides?.strategies,
-      });
+      const results = await scanUniverse(scanOptionsFor(ctx));
       ctx.scanCache = results;
       return results.map((c) => ({
         symbol: c.symbol,
@@ -459,7 +468,10 @@ export async function handleToolCall(
         etf:       { long: 1.5, short: 1.5 },
       };
       const ac = cand.assetClass as keyof typeof minStopMap;
-      const minStopPct = minStopMap[ac]?.[input.direction as "long" | "short"] ?? 1.5;
+      // Managed-stop environments enforce the stop themselves — no broker padding.
+      const minStopPct = usesManagedStops(ctx.environment)
+        ? MANAGED_MIN_SL_PCT
+        : minStopMap[ac]?.[input.direction as "long" | "short"] ?? 1.5;
 
       const setup = cand.hvfSetup;
       if (setup && setup.direction === input.direction) {

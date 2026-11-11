@@ -18,15 +18,23 @@
     },
     {
       "path": "/api/agent/run",
-      "schedule": "30 12 * * *"
+      "schedule": "37 12 * * *"
     },
     {
-      "path": "/api/agent/tactical?env=both",
-      "schedule": "0 */6 * * *"
+      "path": "/api/agent/tactical?env=paper",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/agent/tactical?env=real",
+      "schedule": "5 */6 * * *"
+    },
+    {
+      "path": "/api/agent/monitor",
+      "schedule": "* * * * *"
     },
     {
       "path": "/api/agent/binance",
-      "schedule": "0 12 * * *"
+      "schedule": "22 12 * * *"
     }
   ]
 }

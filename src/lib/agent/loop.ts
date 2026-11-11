@@ -3,7 +3,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { SYSTEM_PROMPT } from "./prompt";
 import { TOOL_DEFS, handleToolCall, type AgentToolContext } from "./tools";
-import { isKillswitchActive } from "./guardrails";
+import { isKillswitchActive, usesManagedStops } from "./guardrails";
 import { reconcileEnv } from "./reconcile";
 import { autoManageOpenPositions } from "./manage";
 import { strategiesFor, strategyNamesFor } from "./strategies";
@@ -100,7 +100,8 @@ Run your scan + decision loop now. Start by calling scan_universe, get_open_posi
 Important:
 - scan results include marketIsOpen for each instrument. Do NOT attempt to open trades on markets where marketIsOpen=false (commodity CFDs are closed weekends; equities/ETFs only during NYSE hours).
 - get_position_status gives quantitative PnL/R-multiple for ANY open positions — use this to decide hold/close/partial-close. At +1R MFE consider close_position_partial(0.5) to lock in half. At -0.5R consider whether thesis still valid.
-- The auto-manager already closed any positions where the HVF signal flipped. So existing open positions still have a valid signal at scan time.`;
+- The auto-manager already closed any positions where the HVF signal flipped. So existing open positions still have a valid signal at scan time.${usesManagedStops(env) ? `
+- Stops are AGENT-MANAGED in this environment: ignore the broker stop minimums in your instructions and use the stop compute_risk_plan returns. A monitor closes the trade when price crosses your stop or target.` : ""}`;
 
   const messages: Anthropic.MessageParam[] = [{ role: "user", content: initialUser }];
 

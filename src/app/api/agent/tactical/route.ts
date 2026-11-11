@@ -8,10 +8,12 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 // Throttle: skip a tactical run if one happened for this env within
-// the last N minutes. Cron is every 6h so 350min (~5h50m) is the right
-// cushion — allows scheduled runs but blocks accidental hammering.
+// the last N minutes. Real's cron is every 6h so 350min (~5h50m) is the
+// right cushion — allows scheduled runs but blocks accidental hammering.
+// Paper's cron is every 15 min and the run gates its own model calls
+// (see tactical-loop), so it is not throttled here.
 // Override with ?force=1 (e.g. for manual debugging).
-const TACTICAL_THROTTLE_MINUTES = 350;
+const TACTICAL_THROTTLE_MINUTES: Record<"paper" | "real", number> = { paper: 0, real: 350 };
 
 async function lastTacticalRunMinsAgo(env: "paper" | "real"): Promise<number | null> {
   const sql = db();
@@ -44,14 +46,14 @@ export async function GET(req: NextRequest) {
   for (const env of envs) {
     if (!force) {
       const minsAgo = await lastTacticalRunMinsAgo(env);
-      if (minsAgo !== null && minsAgo < TACTICAL_THROTTLE_MINUTES) {
+      if (minsAgo !== null && minsAgo < TACTICAL_THROTTLE_MINUTES[env]) {
         results.push({
           environment: env,
           agentKind: "tactical" as const,
           ok: true,
           throttled: true,
           minsAgo: Math.round(minsAgo * 10) / 10,
-          message: `Last tactical run was ${Math.round(minsAgo)}min ago (throttle: ${TACTICAL_THROTTLE_MINUTES}min). Use ?force=1 to override.`,
+          message: `Last tactical run was ${Math.round(minsAgo)}min ago (throttle: ${TACTICAL_THROTTLE_MINUTES[env]}min). Use ?force=1 to override.`,
           iterations: 0,
           toolCalls: [],
           finalText: "",

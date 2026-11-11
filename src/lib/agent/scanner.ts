@@ -129,6 +129,10 @@ export interface ScanOptions {
    *  attached as `strategyCandidates`. Pass [] to skip extra strategies
    *  (default: undefined = HVF only via the legacy path). */
   strategies?: Strategy[];
+  /** Per-direction minimum stop distance (%) the strategies pad to.
+   *  Defaults to the broker minimums; managed-stop environments pass
+   *  the spread floor instead so funnel stops are used as computed. */
+  minStopPct?: { long: number; short: number };
 }
 
 /**
@@ -179,7 +183,7 @@ export async function scanUniverse(opts: ScanOptions = {}): Promise<ScanCandidat
           candles,
           currentPrice,
           assetClass: ac,
-          brokerMinSlPct: BROKER_MIN_SL_PCT[ac] ?? BROKER_MIN_SL_PCT.crypto,
+          brokerMinSlPct: opts.minStopPct ?? BROKER_MIN_SL_PCT[ac] ?? BROKER_MIN_SL_PCT.crypto,
         };
         strategyCandidates = opts.strategies
           .map((strat) => {

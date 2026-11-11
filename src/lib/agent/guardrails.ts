@@ -28,13 +28,16 @@ export const LIMITS: Record<AgentEnvironment, GuardrailLimits> = {
     cooldownAfterConsecutiveLosses: 24,
   },
   paper: {
+    // Paper is the testing lab: many small trades a day, so no forced gap
+    // between entries and no loss-streak cooldown. The daily loss cap and
+    // the concurrent-position cap still bound it.
     maxPositionSizeUsd: 15_000,      // raised from $5k — paper has $181k idle, deploy more
     maxConcurrentPositions: 8,
     maxDailyLossUsd: 12_000,         // 6% of ~$200k equity
-    minMinutesBetweenEntries: 240,
+    minMinutesBetweenEntries: 0,
     minRewardRiskRatio: 1.5,
     maxLeverage: 2,
-    cooldownAfterConsecutiveLosses: 12,
+    cooldownAfterConsecutiveLosses: 0,
   },
   binance: {
     // Spot USDC, long-only. Conservative initial sizing on a $500 USDC balance.
@@ -47,6 +50,42 @@ export const LIMITS: Record<AgentEnvironment, GuardrailLimits> = {
     cooldownAfterConsecutiveLosses: 24,
   },
 };
+
+/**
+ * Environments where the AGENT enforces the stop, not the broker.
+ *
+ * eToro will not hold a tight stop: anything closer than ~10% of the
+ * invested amount is silently moved out to that floor (observed on every
+ * 15m trade Jul–Nov 2026), which made a 1–2% funnel stop impossible to
+ * place. In these environments the trade's real stop/target live in the
+ * `trades` row and stop-monitor.ts closes the position when price crosses
+ * them; the broker only gets a wide safety stop (see brokerSafetyStop).
+ */
+export function usesManagedStops(env: AgentEnvironment): boolean {
+  return env === "paper";
+}
+
+/** Tightest managed stop we accept, % from entry — below this the spread
+ *  alone would trip it on the first monitor pass. */
+export const MANAGED_MIN_SL_PCT = 0.3;
+
+/** Safety stop sent to the broker for a managed-stop trade, as % of the
+ *  invested amount — just outside eToro's 10% floor so it is kept as sent. */
+export const BROKER_SAFETY_STOP_PCT = 12;
+
+/** Broker-side stop for a managed trade: the safety distance, or the
+ *  agent's own stop when that is already further out. */
+export function brokerSafetyStop(
+  entryPrice: number,
+  stopLoss: number,
+  direction: "long" | "short",
+  leverage: number,
+): number {
+  const pct = BROKER_SAFETY_STOP_PCT / Math.max(1, leverage) / 100;
+  const safety = direction === "long" ? entryPrice * (1 - pct) : entryPrice * (1 + pct);
+  const wider = direction === "long" ? Math.min(stopLoss, safety) : Math.max(stopLoss, safety);
+  return Number(wider.toPrecision(6));
+}
 
 export interface ProposedTrade {
   environment: AgentEnvironment;
@@ -244,7 +283,12 @@ export async function checkGuardrails(trade: ProposedTrade): Promise<GuardrailRe
   //    to 5%, destroying R:R from 2.6 → 0.14. We must respect the platform
   //    minimums BEFORE submitting to keep R:R honest.
   const slDistancePct = (risk / trade.entryPrice) * 100;
-  const minSlPct = MIN_SL_DISTANCE_PCT[trade.assetClass || "crypto"][trade.direction] ?? 1;
+  //    Managed-stop environments enforce the stop themselves, so only the
+  //    spread floor applies there.
+  const managed = usesManagedStops(trade.environment);
+  const minSlPct = managed
+    ? MANAGED_MIN_SL_PCT
+    : MIN_SL_DISTANCE_PCT[trade.assetClass || "crypto"][trade.direction] ?? 1;
   if (slDistancePct < minSlPct) {
     return {
       allowed: false,
@@ -252,7 +296,9 @@ export async function checkGuardrails(trade: ProposedTrade): Promise<GuardrailRe
       details: {
         proposedSlPct: Number(slDistancePct.toFixed(2)),
         minSlPct,
-        hint: `eToro silently widens stops below platform minimum, destroying R:R. Use SL >= ${minSlPct}% from entry.`,
+        hint: managed
+          ? `Stop is inside the spread. Use SL >= ${minSlPct}% from entry.`
+          : `eToro silently widens stops below platform minimum, destroying R:R. Use SL >= ${minSlPct}% from entry.`,
       },
     };
   }
