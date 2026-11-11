@@ -139,22 +139,31 @@ export async function scanUniverse(opts: ScanOptions = {}): Promise<ScanCandidat
   const universe = opts.universe || UNIVERSE;
   const period = TIMEFRAME_TO_ETORO[opts.timeframe || "1d"] || "OneDay";
   const candleCount = opts.candleCount || 250;
-  const scanOne = async (entry: UniverseEntry): Promise<ScanCandidate | null> => {
+
+  // Resolve ids, then fetch every rate in ONE call (v2 rates batches up to
+  // 1000 ids) so each asset costs one market-data request (its candles),
+  // not two, against eToro's shared 120/min quota.
+  const ids = await Promise.all(universe.map((e) => resolveInstrument(e).catch(() => null)));
+  const midById = new Map<number, number>();
+  try {
+    const rates = await etoro.getRates(ids.filter((id): id is number => !!id), "paper");
+    for (const r of rates) midById.set(r.instrumentID, (r.bid + r.ask) / 2);
+  } catch (e) {
+    // Non-fatal: currentPrice falls back to the last candle close
+    console.error("[scanner] batch rates fetch failed:", e);
+  }
+
+  const scanOne = async (entry: UniverseEntry, instrumentId: number | null): Promise<ScanCandidate | null> => {
     try {
-      const instrumentId = await resolveInstrument(entry);
       if (!instrumentId) return null;
 
-      const [candles, rates] = await Promise.all([
-        getCandlesFor(instrumentId, period, candleCount),
-        etoro.getRates([instrumentId], "paper"),
-      ]);
+      const candles = await getCandlesFor(instrumentId, period, candleCount);
 
       if (candles.length < 60) return null;
       const hvf = analyzeHVF(candles);
       if (!hvf) return null;
 
-      const rate = rates[0];
-      const currentPrice = rate ? (rate.bid + rate.ask) / 2 : candles[candles.length - 1].close;
+      const currentPrice = midById.get(instrumentId) ?? candles[candles.length - 1].close;
       const hvfFunnel = analyzeHvfFunnels(candles);
       const hvfSetup = actionableSetup(hvfFunnel, currentPrice);
       const hours = checkMarketHours(entry.assetClass as AssetClass);
@@ -206,7 +215,11 @@ export async function scanUniverse(opts: ScanOptions = {}): Promise<ScanCandidat
     }
   };
 
-  const results = await mapPool(universe, SCAN_CONCURRENCY, scanOne);
+  const results = await mapPool(
+    universe.map((entry, i) => ({ entry, id: ids[i] })),
+    SCAN_CONCURRENCY,
+    ({ entry, id }) => scanOne(entry, id),
+  );
   // Actionable HVF setups first, then live funnels by funnel score, then the legacy squeeze score.
   const rank = (c: ScanCandidate) => (c.hvfSetup ? 2 : c.hvfFunnel.best && ["forming", "triggered"].includes(c.hvfFunnel.best.status) ? 1 : 0);
   return results
