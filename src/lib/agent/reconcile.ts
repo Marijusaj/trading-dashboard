@@ -21,7 +21,7 @@
 //
 // Returns a summary the agent loop logs into the next decision.
 import { db } from "@/lib/neon";
-import { etoro, type EtoroClosedTrade } from "@/lib/etoro/client";
+import { etoro, EtoroAPIError, type EtoroClosedTrade } from "@/lib/etoro/client";
 import { recordClose, recordEntry } from "./guardrails";
 import type { AgentEnvironment } from "@/lib/neon";
 
@@ -51,6 +51,9 @@ export interface ReconcileSummary {
   still_pending: string[];
   errors: string[];
 }
+
+/** A pending order older than this with no position is a ghost. */
+const STALE_ORDER_HOURS = 96;
 
 export async function reconcileEnv(env: AgentEnvironment): Promise<ReconcileSummary> {
   const summary: ReconcileSummary = {
@@ -201,7 +204,34 @@ export async function reconcileEnv(env: AgentEnvironment): Promise<ReconcileSumm
       // Source of truth = positions[].isOpen + errorCode. statusID
       // alone is unreliable.
       if (hasOrder) {
-        const info = await etoro.getOrderInfo(env, t.etoro_order_id!);
+        // An order that still has no position after STALE_ORDER_HOURS is
+        // never going to get one (the longest market closure is a long
+        // weekend). Give it one last lookup so a filled order still gets
+        // linked; anything else — an order eToro no longer knows, or one still
+        // "pending" — is abandoned instead of being re-polled forever.
+        const orderAgeHours = (Date.now() - new Date(t.opened_at).getTime()) / 3_600_000;
+        const stale = orderAgeHours > STALE_ORDER_HOURS;
+        let info: Awaited<ReturnType<typeof etoro.getOrderInfo>> | null = null;
+        try {
+          info = await etoro.getOrderInfo(env, t.etoro_order_id!);
+        } catch (e) {
+          // Only "eToro has no such order" settles it; a rate limit or
+          // outage is retried on the next pass.
+          if (!stale || !(e instanceof EtoroAPIError && e.status === 404)) throw e;
+        }
+        if (stale && !(info && info.positionIsOpen && info.positionID)) {
+          await sql`
+            UPDATE trades
+               SET status        = 'abandoned',
+                   closed_at     = now(),
+                   exit_reason   = 'expired',
+                   reconciled_at = now()
+             WHERE id = ${t.id}
+          `;
+          summary.abandoned.push(t.id);
+          continue;
+        }
+        if (!info) continue;
         if (info.errorCode && info.errorCode !== 0) {
           // Real rejection
           await sql`

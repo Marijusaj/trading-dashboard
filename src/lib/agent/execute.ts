@@ -9,7 +9,7 @@
 // If anything throws, it's logged with outcome_status='failed'.
 import { db } from "@/lib/neon";
 import { etoro } from "@/lib/etoro/client";
-import { checkGuardrails, recordEntry, recordClose, type ProposedTrade } from "./guardrails";
+import { checkGuardrails, recordEntry, recordClose, usesManagedStops, brokerSafetyStop, type ProposedTrade } from "./guardrails";
 import type { AgentEnvironment } from "@/lib/neon";
 import type { StrategyName } from "./strategies/types";
 
@@ -168,6 +168,14 @@ export async function openTrade(req: OpenTradeRequest): Promise<OpenTradeResult>
   ` as unknown as { id: string }[];
   const decisionId = decRows[0].id;
 
+  // Managed-stop environments: the broker gets a wide safety stop it will
+  // keep as sent; the real stop (req.stopLoss) is stored on the trade and
+  // enforced by stop-monitor.ts. The target goes to the broker unchanged.
+  const managedStop = usesManagedStops(req.env);
+  const brokerStop = managedStop
+    ? brokerSafetyStop(req.entryPrice, req.stopLoss, req.direction, req.leverage)
+    : req.stopLoss;
+
   // ── 3. Place order + poll until terminal ─────────────────────
   try {
     const { placement, finalInfo, outcome } = await etoro.openPositionAndAwait(
@@ -177,7 +185,7 @@ export async function openTrade(req: OpenTradeRequest): Promise<OpenTradeResult>
         isBuy: req.direction === "long",
         amount: req.sizeUsd,
         leverage: req.leverage,
-        stopLossRate: req.stopLoss,
+        stopLossRate: brokerStop,
         takeProfitRate: req.takeProfit,
       },
       { maxWaitMs: 12_000, intervalMs: 1_500 },
@@ -233,7 +241,7 @@ export async function openTrade(req: OpenTradeRequest): Promise<OpenTradeResult>
       UPDATE agent_decisions
          SET outcome_status = ${decOutcome},
              trade_id       = ${tradeId},
-             raw_context    = ${JSON.stringify({ proposed: req, placement, finalInfo, outcome })}::jsonb
+             raw_context    = ${JSON.stringify({ proposed: req, brokerStop, managedStop, placement, finalInfo, outcome })}::jsonb
        WHERE id = ${decisionId}
     `;
 
@@ -246,7 +254,9 @@ export async function openTrade(req: OpenTradeRequest): Promise<OpenTradeResult>
       // open position's SL/TP. If R:R fell below half of what we approved,
       // immediately close the trade — better a small slippage loss than
       // an asymmetric position eating capital.
-      if (etoroPositionId) {
+      // Not for managed stops: there the broker stop is only a safety net
+      // and the stop that defines R:R is enforced by the monitor.
+      if (etoroPositionId && !managedStop) {
         try {
           const portfolio = await etoro.getPortfolio(req.env);
           const actualPos = portfolio.positions.find((p) => String(p.positionID) === etoroPositionId);
@@ -306,7 +316,7 @@ export async function openTrade(req: OpenTradeRequest): Promise<OpenTradeResult>
       tradeId,
       etoroPositionId: etoroPositionId || null,
       status: outcome === "executed" ? "executed" : "skipped_guardrail",
-      message: `${verb}, SL ${req.stopLoss}, TP ${req.takeProfit}`,
+      message: `${verb}, SL ${req.stopLoss}${managedStop ? " (agent-managed)" : ""}, TP ${req.takeProfit}`,
       guardrailViolation: null,
     };
   } catch (e) {

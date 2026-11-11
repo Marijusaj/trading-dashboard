@@ -2,8 +2,11 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { TACTICAL_PROMPT } from "./tactical-prompt";
 import { TACTICAL_UNIVERSE, TACTICAL_LIMITS } from "./tactical-universe";
-import { TOOL_DEFS, handleToolCall, type AgentToolContext } from "./tools";
-import { isKillswitchActive } from "./guardrails";
+import { TOOL_DEFS, handleToolCall, scanOptionsFor, type AgentToolContext } from "./tools";
+import { isKillswitchActive, usesManagedStops } from "./guardrails";
+import { scanUniverse, type ScanCandidate } from "./scanner";
+import { recordObservationDecision } from "./execute";
+import { db } from "@/lib/neon";
 import { strategiesFor, strategyNamesFor } from "./strategies";
 import { reconcileEnv } from "./reconcile";
 import { autoManageOpenPositions } from "./manage";
@@ -13,6 +16,66 @@ const TACTICAL_MODEL = "claude-haiku-4-5";   // Cheap + fast for pattern matchin
 const MAX_TOKENS = 4000;
 const MAX_TOOL_ITERATIONS = 8;
 
+/** A flagged asset is not re-flagged while the agent has looked at it
+ *  (any tactical decision naming it) within this window. */
+const SETUP_REFLAG_MINUTES = 60;
+/** With no setups, still leave one "scanned, nothing" row this often so
+ *  the dashboard shows the agent is alive. */
+const HEARTBEAT_MINUTES = 360;
+/** Other-strategy score bar on paper (same bar the prompt gives the model). */
+const PAPER_STRATEGY_SCORE_BAR = 50;
+
+/** Does this scan row clear the env's entry bar? Mirrors the prompt:
+ *  real → a computed HVF setup; paper → that, or another strategy > 50. */
+export function clearsEntryBar(c: ScanCandidate, env: AgentEnvironment): boolean {
+  if (!c.marketIsOpen) return false;
+  if (c.hvfSetup) return true;
+  return env !== "real" && !!c.strategyCandidates?.some((s) => s.score > PAPER_STRATEGY_SCORE_BAR);
+}
+
+/** Symbols worth waking the model for: clear the bar, no open trade on
+ *  them in this env, and not already looked at in the re-flag window. */
+export async function freshSetups(env: AgentEnvironment, scan: ScanCandidate[]): Promise<string[]> {
+  const actionable = scan.filter((c) => clearsEntryBar(c, env)).map((c) => c.symbol);
+  if (actionable.length === 0) return [];
+  const sql = db();
+  const busy = (await sql`
+    SELECT asset FROM trades
+     WHERE environment = ${env} AND status = 'open'
+    UNION
+    SELECT asset FROM agent_decisions
+     WHERE environment = ${env} AND agent_kind = 'tactical' AND asset IS NOT NULL
+       AND ts > now() - (${String(SETUP_REFLAG_MINUTES)} || ' minutes')::interval
+  `) as unknown as { asset: string }[];
+  const skip = new Set(busy.map((r) => r.asset));
+  return actionable.filter((s) => !skip.has(s));
+}
+
+/** Record a model-free "nothing to do" row if none was written recently. */
+async function heartbeat(env: AgentEnvironment, scan: ScanCandidate[]): Promise<void> {
+  const sql = db();
+  const rows = (await sql`
+    SELECT MAX(ts) AS last_ts FROM agent_decisions
+     WHERE environment = ${env} AND agent_kind = 'tactical'
+  `) as unknown as { last_ts: string | null }[];
+  const last = rows[0]?.last_ts ? new Date(rows[0].last_ts).getTime() : 0;
+  if ((Date.now() - last) / 60_000 < HEARTBEAT_MINUTES) return;
+  const live = scan
+    .filter((c) => c.hvfFunnel.best && ["forming", "triggered"].includes(c.hvfFunnel.best.status))
+    .slice(0, 3)
+    .map((c) => `${c.symbol} ${c.hvfFunnel.best!.direction} (${c.hvfFunnel.best!.status})`);
+  await recordObservationDecision(env, {
+    decisionType: "scan_only",
+    asset: null,
+    reasoning:
+      `Code scan (no model call): ${scan.length} assets on 15m, no fresh setup clears the entry bar. ` +
+      (live.length ? `Funnels still developing: ${live.join(", ")}.` : `No live funnels.`),
+    hvfScore: null,
+    conviction: null,
+    agentKind: "tactical",
+  });
+}
+
 export interface TacticalRunSummary {
   environment: AgentEnvironment;
   agentKind: "tactical";
@@ -21,6 +84,10 @@ export interface TacticalRunSummary {
   toolCalls: { name: string; input: unknown; result: unknown }[];
   finalText: string;
   error?: string;
+  /** Set when the code scan found nothing and the model was not called. */
+  skipped?: string;
+  /** Symbols the code scan flagged for the model. */
+  flagged?: string[];
 }
 
 export async function runTacticalAgent(env: AgentEnvironment): Promise<TacticalRunSummary> {
@@ -90,6 +157,26 @@ export async function runTacticalAgent(env: AgentEnvironment): Promise<TacticalR
     manageNote = `\nAuto-management failed: ${e instanceof Error ? e.message : String(e)}\n`;
   }
 
+  // ── Gate: scan in code, wake the model only for a fresh setup ──────
+  // Reconcile and auto-manage above already ran, so open trades are looked
+  // after on every pass whether or not the model is called.
+  let flagged: string[];
+  try {
+    const scan = await scanUniverse(scanOptionsFor(ctx));
+    flagged = await freshSetups(env, scan);
+    if (flagged.length === 0) {
+      await heartbeat(env, scan);
+      summary.ok = true;
+      summary.skipped = `No fresh setup across ${scan.length} assets — model not called`;
+      return summary;
+    }
+  } catch (e) {
+    summary.error = `Pre-scan failed: ${e instanceof Error ? e.message : String(e)}`;
+    return summary;
+  }
+  summary.flagged = flagged;
+
+  const managed = usesManagedStops(env);
   const now = new Date();
   const strategyLineup =
     env === "real"
@@ -102,15 +189,19 @@ Environment: ${env.toUpperCase()} (TACTICAL — 15m crypto scalps)
 ${strategyLineup}
 Tactical universe (12): SOL, AVAX (long-only), DOGE, BNB, LINK, TRX, XRP, DOT, ATOM, NEAR, INJ, SUI
 Max position: $${TACTICAL_LIMITS[env].maxPositionSizeUsd}
+Fresh setups flagged by the code scan (you are only called when there is one): ${flagged.join(", ")}
 ${reconcileNote}${manageNote}
 Workflow:
 1. get_position_status — quantitative PnL on ANY open tactical trades
 2. For each open trade: at +1R consider close_position_partial(0.5); at -0.5R reassess thesis
-3. scan_universe (15m, 12 cryptos)
-4. Most scans → HOLD. Only open when a strategy clears its env bar.
+3. scan_universe (15m, 12 cryptos) — confirm the flagged setups are still there
+4. Open what clears the bar${managed ? " — up to 3 new entries this scan, one per asset" : " — max 1 new entry this scan"}; otherwise HOLD.
 
 Constraints:
-- Crypto SHORTS need SL ≥ 5% from entry (eToro min). Tight stops get widened, destroying R:R.
+${managed
+  ? `- Stops are AGENT-MANAGED here: use the setup's own stop exactly as compute_risk_plan returns it (no broker padding). A monitor closes the trade when price crosses your stop or target; the broker only holds a wide safety stop.
+- No minimum gap between entries and no loss-streak cooldown in this environment.`
+  : `- Crypto SHORTS need SL ≥ 5% from entry (eToro min). Tight stops get widened, destroying R:R.`}
 - AVAX shorts disallowed (errorCode 747). Long entries OK.
 - Auto-manager already closed any positions with degraded HVF.`;
 
