@@ -3,7 +3,9 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { db } from "@/lib/neon";
 import { etoro } from "@/lib/etoro/client";
-import { scanUniverse, type ScanCandidate, type ScanOptions } from "./scanner";
+import { scanUniverse, analyzeHvfForSymbol, type ScanCandidate, type ScanOptions } from "./scanner";
+import { summarizeFunnel, type HvfSetup } from "./hvf-funnel";
+import { UNIVERSE } from "./universe";
 import { planRisk, analyzeHVF, type OHLC } from "./hvf";
 import { openTrade, closeTrade, recordObservationDecision, sanitizeReasoning, type OpenTradeRequest, type AgentKind } from "./execute";
 import type { UniverseEntry } from "./universe";
@@ -58,8 +60,12 @@ export const TOOL_DEFS: Anthropic.Tool[] = [
   {
     name: "scan_universe",
     description:
-      "Scan the curated universe and return per-asset analysis. " +
-      "Always returns HVF score + components. In multi-strategy mode (paper / binance) ALSO returns " +
+      "Scan the curated universe and return per-asset analysis, ranked with actionable HVF setups first. " +
+      "`hvfFunnel` is Francis Hunt's actual HVF computed from the candles: the 1H/1L/2H/2L/3H/3L points with dates, " +
+      "entry (3H; 3L for inverted), stop (3L; 3H for inverted), target (AMP1 projected from the 3H/3L midway), second interim, status, volume-by-price context. " +
+      "`hvfSetup` is non-null only when a funnel can be acted on NOW (triggered, still near entry, R:R >= 2 from current price). " +
+      "`hvfScore`/`components` are a LEGACY squeeze score (ATR/EMA) — not Hunt's method; do not treat it as an HVF. " +
+      "In multi-strategy mode (paper / binance) ALSO returns " +
       "`strategyCandidates`: a list of entries from every enabled strategy (hvf, trend_break, mean_revert, hvf_mtf). " +
       "Each strategy has its OWN scoring scale — do not compare scores across strategies. " +
       "Pick the strategy whose setup most clearly fits the asset's current price action.",
@@ -115,7 +121,9 @@ export const TOOL_DEFS: Anthropic.Tool[] = [
   {
     name: "compute_risk_plan",
     description:
-      "Compute SL/TP/R:R for a proposed entry. Uses ATR + recent pivots. Returns the planned levels — ALWAYS call this before open_position.",
+      "Compute SL/TP/R:R for a proposed entry. When the symbol has an actionable HVF setup in the same direction, uses the funnel's geometry " +
+      "(stop = 3L or the primer's 3L, target = AMP1 from midway), padded to the eToro minimum stop distance. Otherwise falls back to the legacy ATR + pivot plan. " +
+      "Returns the planned levels and which method produced them — ALWAYS call this before open_position.",
     input_schema: {
       type: "object",
       properties: {
@@ -124,6 +132,22 @@ export const TOOL_DEFS: Anthropic.Tool[] = [
         entryPrice: { type: "number" },
       },
       required: ["symbol", "direction", "entryPrice"],
+    },
+  },
+  {
+    name: "analyze_hvf",
+    description:
+      "Compute Francis Hunt's HVF for one symbol from raw candles at any timeframe (1h, 4h, 1d, 1w) and return the full numbers: " +
+      "every funnel found (bullish and inverted) with its 1H..3L points and dates, amplitudes, entry/stop/midway/target/interim, R:R, status, " +
+      "trigger-bar volume, primer (squeeze within the squeeze), volume-by-price key levels and voids, plus the detector's stated assumptions. " +
+      "Use it to check a higher timeframe (Hunt reads macro before daily), to inspect a setup before trading, or to explain your reasoning with numbers.",
+    input_schema: {
+      type: "object",
+      properties: {
+        symbol: { type: "string" },
+        timeframe: { type: "string", enum: ["1h", "4h", "1d", "1w"], description: "Default 1d" },
+      },
+      required: ["symbol"],
     },
   },
   {
@@ -252,6 +276,18 @@ export async function handleToolCall(
         assetClass: c.assetClass,
         thesis: c.thesis,
         currentPrice: c.currentPrice,
+        hvfSetup: c.hvfSetup && compactSetup(c.hvfSetup),
+        hvfFunnel: c.hvfFunnel.best
+          ? {
+              best: summarizeFunnel(c.hvfFunnel.best),
+              others: c.hvfFunnel.funnels.slice(1, 3).map((f) => ({ direction: f.direction, status: f.status, score: f.score, entry: f.levels.entry, stop: f.levels.stop, target: f.levels.target })),
+              legacyTargets: c.hvfFunnel.legacyTargets.slice(0, 4).map((l) => l.price),
+            }
+          : null,
+        keyLevels: c.hvfFunnel.profile && {
+          poc: Number(c.hvfFunnel.profile.poc.toPrecision(6)),
+          valueArea70: [Number(c.hvfFunnel.profile.valueAreaLow.toPrecision(6)), Number(c.hvfFunnel.profile.valueAreaHigh.toPrecision(6))],
+        },
         hvfScore: c.hvf.score,
         direction: c.hvf.direction,
         components: c.hvf.components,
@@ -383,6 +419,31 @@ export async function handleToolCall(
       return rows;
     }
 
+    case "analyze_hvf": {
+      const entry = (ctx.overrides?.universe ?? UNIVERSE).find((u) => u.symbol === input.symbol)
+        ?? UNIVERSE.find((u) => u.symbol === input.symbol);
+      if (!entry) return { error: `Symbol ${input.symbol} is not in the universe` };
+      const r = await analyzeHvfForSymbol(entry, input.timeframe ?? "1d");
+      if ("error" in r) return r;
+      const p = r.analysis.profile;
+      return {
+        symbol: input.symbol,
+        timeframe: input.timeframe ?? "1d",
+        candles: r.candles,
+        currentPrice: r.currentPrice,
+        setup: r.setup && compactSetup(r.setup),
+        funnels: r.analysis.funnels.map(summarizeFunnel),
+        legacyTargets: r.analysis.legacyTargets,
+        volumeProfile: p && {
+          poc: p.poc,
+          valueArea70: [p.valueAreaLow, p.valueAreaHigh],
+          keyLevelZones: p.hvnZones.map((z) => ({ low: z.low, high: z.high, volumeShare: Number(z.share.toFixed(3)) })),
+          voids: p.voidZones.map((z) => ({ low: z.low, high: z.high })),
+        },
+        assumptions: r.analysis.assumptions,
+      };
+    }
+
     case "compute_risk_plan": {
       const cand = (ctx.scanCache || []).find((c) => c.symbol === input.symbol);
       if (!cand) {
@@ -399,6 +460,30 @@ export async function handleToolCall(
       };
       const ac = cand.assetClass as keyof typeof minStopMap;
       const minStopPct = minStopMap[ac]?.[input.direction as "long" | "short"] ?? 1.5;
+
+      const setup = cand.hvfSetup;
+      if (setup && setup.direction === input.direction) {
+        const entryPrice: number = input.entryPrice;
+        const dir = setup.direction === "long" ? 1 : -1;
+        const brokerStop = entryPrice * (1 - (dir * minStopPct) / 100);
+        // Pad outward only: the wider of the funnel stop and the broker floor.
+        const stopLoss = dir === 1 ? Math.min(setup.stop, brokerStop) : Math.max(setup.stop, brokerStop);
+        const risk = Math.abs(entryPrice - stopLoss);
+        const reward = (setup.target - entryPrice) * dir;
+        return {
+          method: "hvf_funnel",
+          via: setup.via,
+          stopLoss: Number(stopLoss.toPrecision(6)),
+          takeProfit: setup.target,
+          interim2: setup.funnel.levels.interim2,
+          rewardRiskRatio: risk > 0 ? Number((reward / risk).toFixed(2)) : 0,
+          stopDistancePct: Number(((risk / entryPrice) * 100).toFixed(2)),
+          targetDistancePct: Number(((reward / entryPrice) * 100).toFixed(2)),
+          stopPaddedToBrokerMin: stopLoss !== setup.stop,
+          minStopPctApplied: minStopPct,
+        };
+      }
+
       const plan = planRisk({
         entryPrice: input.entryPrice,
         direction: input.direction,
@@ -407,7 +492,7 @@ export async function handleToolCall(
         recentHigh: cand.hvf.metrics.recentHigh,
         minStopPct,
       });
-      return { ...plan, minStopPctApplied: minStopPct };
+      return { method: "legacy_atr_pivot", note: "No actionable HVF setup in this direction — these levels are NOT Hunt's", ...plan, minStopPctApplied: minStopPct };
     }
 
     case "open_position": {
@@ -436,6 +521,17 @@ export async function handleToolCall(
         input.strategy && VALID_STRATS.has(input.strategy as StrategyName)
           ? (input.strategy as StrategyName)
           : "hvf";
+
+      // A trade labelled "hvf" must have Hunt's funnel behind it — computed, not asserted.
+      if (strategy === "hvf" && (!cand.hvfSetup || cand.hvfSetup.direction !== input.direction)) {
+        return {
+          error: `No actionable HVF ${input.direction} setup for ${input.symbol}. ` +
+            (cand.hvfFunnel.best
+              ? `Best funnel is ${cand.hvfFunnel.best.direction} / ${cand.hvfFunnel.best.status} (entry ${cand.hvfFunnel.best.levels.entry}, distance ${cand.hvfFunnel.best.distanceToEntryPct}%).`
+              : "No funnel found in the candles.") +
+            " HVF trades require a triggered funnel still near its entry with R:R >= 2.",
+        };
+      }
 
       const req: OpenTradeRequest = {
         env: ctx.environment,
@@ -632,4 +728,18 @@ export async function getInstrumentCandles(instrumentId: number): Promise<OHLC[]
 export async function getHvfForInstrument(instrumentId: number) {
   const candles = await getInstrumentCandles(instrumentId);
   return analyzeHVF(candles);
+}
+
+/** Small, agent-facing view of an actionable setup. */
+function compactSetup(s: HvfSetup) {
+  return {
+    direction: s.direction,
+    via: s.via,
+    entryLevel: s.via === "primer" ? s.funnel.primer?.entry : s.funnel.levels.entry,
+    stop: s.stop,
+    target: s.target,
+    interim2: s.funnel.levels.interim2,
+    rewardRiskFromCurrent: s.rewardRisk,
+    funnelScore: s.funnel.score,
+  };
 }

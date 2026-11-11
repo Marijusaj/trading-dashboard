@@ -63,7 +63,7 @@ export const TACTICAL_UNIVERSE: UniverseEntry[] = [
     symbol: "XRP",
     display: "Ripple",
     assetClass: "crypto",
-    thesis: "High-volume mid-cap, frequent 15m setups, broken support sub-$1 target",
+    thesis: "High-volume mid-cap, frequent 15m setups; sub-$1 H&S target already made, Francis now long-biased",
     shortAllowed: true,
     instrumentId: null,
     minSizeUsd: 10,
